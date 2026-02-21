@@ -5,7 +5,7 @@ import collections
 import yaml
 import argparse
 
-from agent_utils import Agent, DeepQAgent, RandomAgent, HumanAgent, ActionStep
+from agent_utils import Agent, DeepQAgent, RandomAgent, HumanAgent, NothingAgent, ActionStep
 from mazerush_env import MazerushEnv
 
 
@@ -27,6 +27,8 @@ def _build_agents(
             agents.append(HumanAgent(action_space))
         elif ptype == "RandomAgent":
             agents.append(RandomAgent(action_space))
+        elif ptype == "NothingAgent":
+            agents.append(NothingAgent(action_space))
         elif ptype == "DeepQAgent":
             agents.append(DeepQAgent(
                 action_space,

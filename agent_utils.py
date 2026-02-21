@@ -37,6 +37,13 @@ class RandomAgent(Agent):
         return self._action_space.sample()
 
 
+class NothingAgent(Agent):
+
+    @override
+    def select_action(self, state, train: bool = False) -> int:
+        return 5  # ACTION_NOTHING
+
+
 class DeepQAgent(Agent):
 
     def __init__(
