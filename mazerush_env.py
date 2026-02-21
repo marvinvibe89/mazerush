@@ -249,8 +249,8 @@ class MazerushEnv(gym.Env):
         if seed is not None:
             self._episode_rng = _random.Random(seed)
         else:
-            # Advance internal RNG so successive episodes differ
-            self._episode_rng = _random.Random(self._episode_rng.randint(0, 2**31))
+            # Advance internal RNG so that next episode is truely random
+            self._episode_rng = _random.Random(_random.randint(0, 2**31))
 
         self.tick = 0
         self.laser_items = []
