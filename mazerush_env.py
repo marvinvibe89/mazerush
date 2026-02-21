@@ -215,18 +215,15 @@ class MazerushEnv(gym.Env):
         # Action / observation spaces ---
         self.action_space = spaces.Discrete(NUM_ACTIONS)
 
-        # Observation vector per player:
-        #   own: x, y, cooldown, status_neutral, status_has_laser, status_shooting  (6)
-        #   per other player: same 6 values → (num_players - 1) * 6
-        #   per laser item slot: x, y, exists → max_laser_items * 3
-        self._obs_per_player = 6
-        self._obs_dim = (
-            self._obs_per_player * num_players
-            + max_laser_items * 3
-        )
-        self.observation_space = spaces.Box(
-            low=0.0, high=1.0, shape=(self._obs_dim,), dtype=np.float32
-        )
+        # Observation vector per player components:
+        #   own: x, y, cooldown, status  (4 components)
+        #   per other player: same 4 components
+        #   per laser item slot: x, y, exists  (3 components)
+        player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
+        item_states = [self.width, self.height, 2]
+        self._num_states = player_states * self.num_players + item_states * self.max_laser_items
+
+        self.observation_space = spaces.MultiDiscrete(self._num_states)
 
         # Runtime state (populated in reset)
         self.players: list[_Player] = []
@@ -564,17 +561,16 @@ class MazerushEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self, player_idx: int) -> np.ndarray:
-        obs = np.zeros(self._obs_dim, dtype=np.float32)
+        obs = np.zeros(len(self._num_states), dtype=np.int32)
         offset = 0
 
         def _write_player(p: _Player):
             nonlocal offset
-            obs[offset] = p.x / max(self.width - 1, 1)
-            obs[offset + 1] = p.y / max(self.height - 1, 1)
-            obs[offset + 2] = p.move_cooldown_remaining / max(self.move_cooldown, 1)
-            # One-hot status
-            obs[offset + 3 + int(p.status)] = 1.0
-            offset += self._obs_per_player
+            obs[offset] = p.x
+            obs[offset + 1] = p.y
+            obs[offset + 2] = p.move_cooldown_remaining
+            obs[offset + 3] = int(p.status)
+            offset += 4
 
         # Own player first
         _write_player(self.players[player_idx])
@@ -587,10 +583,13 @@ class MazerushEnv(gym.Env):
         for slot in range(self.max_laser_items):
             if slot < len(self.laser_items):
                 ix, iy = self.laser_items[slot]
-                obs[offset] = ix / max(self.width - 1, 1)
-                obs[offset + 1] = iy / max(self.height - 1, 1)
-                obs[offset + 2] = 1.0  # exists
-            # else: zeros (item does not exist)
+                obs[offset] = ix
+                obs[offset + 1] = iy
+                obs[offset + 2] = 1  # exists
+            else:
+                obs[offset] = 0
+                obs[offset + 1] = 0
+                obs[offset + 2] = 0
             offset += 3
 
         return obs

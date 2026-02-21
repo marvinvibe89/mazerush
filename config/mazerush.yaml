@@ -14,7 +14,8 @@ env:
     max_episode_ticks: 3000
 
 players:
-  - type: "HumanAgent"
+  # - type: "HumanAgent"
+  - type: "DeepQAgent"
   - type: "RandomAgent"
 
 agent:  # DeepQAgent config (used when a player type is DeepQAgent)
@@ -22,11 +23,11 @@ agent:  # DeepQAgent config (used when a player type is DeepQAgent)
   discount_factor: 0.99
   epsilon_start: 1.0
   epsilon_end: 0.1
-  epsilon_decay: 0.999
+  epsilon_decay: 0.99
   replay_buffer_episodes: 1000
   train_batch_size: 128
-  train_epochs: 100
-  hidden_size: 128
+  train_epochs: 1000
+  hidden_size: 64
 
 training:
   num_episodes: 20000

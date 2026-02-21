@@ -42,8 +42,7 @@ class DeepQAgent(Agent):
     def __init__(
         self,
         action_space,
-        num_states: int | None = None,
-        state_dim: int | None = None,
+        num_states: Sequence[int],
         *,
         learning_rate: float = 1e-4,
         discount_factor: float = 0.99,
@@ -57,15 +56,7 @@ class DeepQAgent(Agent):
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # Support both discrete (one-hot) and continuous state representations
-        if state_dim is not None:
-            self._input_dim = state_dim
-            self._num_states = None  # continuous mode
-        elif num_states is not None:
-            self._input_dim = num_states
-            self._num_states = num_states  # discrete / one-hot mode
-        else:
-            raise ValueError("Either num_states or state_dim must be provided")
+        self._num_states = tuple(num_states)
         self._learning_rate = learning_rate
         self._discount_factor = discount_factor
         self._epsilon = epsilon_start
@@ -74,34 +65,25 @@ class DeepQAgent(Agent):
         self._train_batch_size = train_batch_size
         self._train_epochs = train_epochs
         self._replay_buffer = collections.deque(maxlen=replay_buffer_episodes)
-        self._action_value_fn = torch.nn.Sequential(
-            torch.nn.Linear(self._input_dim, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, action_space.n),
-        ).to(self._device)
+        self._action_value_fn = _DeepQNetwork(self._num_states, hidden_size, action_space.n).to(self._device)
         self._optimizer = torch.optim.Adam(self._action_value_fn.parameters(), lr=self._learning_rate)
 
     def _state_to_tensor(self, state) -> torch.Tensor:
-        """Convert a state (int or array) to a float tensor."""
-        if self._num_states is not None:
-            # Discrete: one-hot encode
-            return torch.nn.functional.one_hot(
-                torch.tensor(state, device=self._device),
-                num_classes=self._num_states,
-            ).float()
-        else:
-            # Continuous vector
-            if isinstance(state, np.ndarray):
-                return torch.tensor(state, dtype=torch.float32, device=self._device)
-            return torch.tensor(state, dtype=torch.float32, device=self._device)
+        """Convert a state array to a tensor."""
+        if isinstance(state, np.ndarray):
+            return torch.tensor(state, dtype=torch.long, device=self._device)
+        return torch.tensor(state, dtype=torch.long, device=self._device)
 
     def _predict_rewards(self, state) -> torch.Tensor:
-        return self._action_value_fn(self._state_to_tensor(state))
+        x = self._state_to_tensor(state)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)  # Add batch dimension
+        return self._action_value_fn(x)
 
     def select_action(self, state, train: bool = False) -> int:
         if train and random.random() < self._epsilon:
             return self._action_space.sample()
-        return torch.argmax(self._predict_rewards(state)).item()
+        return torch.argmax(self._predict_rewards(state)[0]).item()
     
     def register_action_steps(self, action_steps: list[ActionStep]):
         self._replay_buffer.append(action_steps)
@@ -208,3 +190,29 @@ class HumanAgent(Agent):
         if self._action_queue:
             return self._action_queue.popleft()
         return -1  # no-op sentinel; env treats invalid actions as no-op
+
+
+class _DeepQNetwork(torch.nn.Module):
+    def __init__(self, num_states: Sequence[int], hidden_size: int, num_actions: int):
+        super().__init__()
+        self.num_states = num_states
+        # Create an embedding projection for each component
+        self.embeddings = torch.nn.ModuleList([
+            torch.nn.Linear(n, hidden_size, bias=False) for n in num_states
+        ])
+        self.output_net = torch.nn.Sequential(
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, num_actions),
+        )
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        # state is [batch_size, num_components]
+        # output shape is [batch_size, num_actions]
+        embeds = []
+        for i, n in enumerate(self.num_states):
+            x_one_hot = torch.nn.functional.one_hot(state[..., i], num_classes=n).float()
+            embeds.append(self.embeddings[i](x_one_hot))
+        
+        # Sum the embeddings
+        h = torch.stack(embeds, dim=0).sum(dim=0)
+        return self.output_net(h)
