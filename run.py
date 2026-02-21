@@ -78,8 +78,8 @@ def run_episode(
             agent.select_action(obs, train)
             for agent, obs in zip(agents, obs_n)
         ]
-        # Replace invalid actions with ACTION_NOTHING (5)
-        action_n = [a if 0 <= a < env.action_space.n else 5 for a in action_n]
+        if not all(0 <= a < env.action_space.n for a in action_n):
+            raise ValueError("Invalid action selected")
 
         prev_obs_n = obs_n
         obs_n, reward_n, done_n, truncated_n, info_n = env.step(action_n)

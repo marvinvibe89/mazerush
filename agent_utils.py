@@ -77,8 +77,6 @@ class DeepQAgent(Agent):
 
     def _state_to_tensor(self, state) -> torch.Tensor:
         """Convert a state array to a tensor."""
-        if isinstance(state, np.ndarray):
-            return torch.tensor(state, dtype=torch.long, device=self._device)
         return torch.tensor(state, dtype=torch.long, device=self._device)
 
     def _predict_rewards(self, state) -> torch.Tensor:
