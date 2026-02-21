@@ -1,6 +1,5 @@
 """Mazerush: a multi-player grid-world laser game for RL training."""
 
-import enum
 import random as _random
 from typing import Any
 
@@ -8,21 +7,12 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from mazerush_utils import CellType, PlayerStatus
 from renderer import MazerushRenderer
 
 # ---------------------------------------------------------------------------
 # Constants / enums
 # ---------------------------------------------------------------------------
-
-class CellType(enum.IntEnum):
-    EMPTY = 0
-    WALL = 1
-
-
-class PlayerStatus(enum.IntEnum):
-    NEUTRAL = 0
-    HAS_LASER = 1
-    SHOOTING = 2
 
 
 # Actions

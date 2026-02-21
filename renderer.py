@@ -3,7 +3,7 @@
 import pygame
 import numpy as np
 
-from mazerush_env import CellType, PlayerStatus
+from mazerush_utils import CellType, PlayerStatus
 
 
 # Player colors (up to 4 players)
