@@ -161,7 +161,9 @@ def train(
 # Main
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the Mazerush game."""
+
     parser = argparse.ArgumentParser(description="Mazerush")
     parser.add_argument("--config", type=str, default="config/mazerush.yaml", help="Path to configuration file")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
@@ -223,3 +225,6 @@ if __name__ == "__main__":
                 break
 
     env.close()
+
+if __name__ == "__main__":
+    main()
