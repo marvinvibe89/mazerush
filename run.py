@@ -4,6 +4,7 @@ import statistics
 import collections
 import yaml
 import argparse
+import pygame
 
 from agent_utils import Agent, DeepQAgent, RandomAgent, HumanAgent, NothingAgent, ActionStep
 from mazerush_env import MazerushEnv
@@ -67,7 +68,6 @@ def run_episode(
                     agent.key_listener(event)
 
         # Check for quit
-        import pygame
         for event in events:
             if event.type == pygame.QUIT:
                 env.close()
@@ -220,7 +220,6 @@ def main():
         while True:
             per_player_steps, rewards, is_wins = run_episode(agents, env, train=False)
             print(f"Episode finished. Rewards: {rewards}, Wins: {is_wins}")
-            import pygame
             if not pygame.display.get_init():
                 break
 

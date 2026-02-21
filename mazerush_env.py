@@ -8,6 +8,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from renderer import MazerushRenderer
 
 # ---------------------------------------------------------------------------
 # Constants / enums
@@ -603,7 +604,6 @@ class MazerushEnv(gym.Env):
         if self.render_mode != "human":
             return
         if self._renderer is None:
-            from renderer import MazerushRenderer
             self._renderer = MazerushRenderer(self)
         self._renderer.render(self)
 

@@ -6,6 +6,7 @@ import statistics
 from typing import Sequence
 
 import numpy as np
+import pygame
 import torch
 from typing_extensions import override
 
@@ -172,8 +173,7 @@ class HumanAgent(Agent):
 
     @staticmethod
     def _get_key_map() -> dict[int, int]:
-        """Lazy-import pygame constants to avoid import at module level."""
-        import pygame  # noqa: delay import
+        """Get the key map for the human agent."""
         return {
             pygame.K_UP: 0,     # ACTION_UP
             pygame.K_DOWN: 1,   # ACTION_DOWN
@@ -184,7 +184,6 @@ class HumanAgent(Agent):
 
     def key_listener(self, event) -> None:
         """Called by the renderer / run-loop with each pygame event."""
-        import pygame  # noqa
         if event.type == pygame.KEYDOWN:
             key_map = self._get_key_map()
             if event.key in key_map:
@@ -206,6 +205,7 @@ class _DeepQNetwork(torch.nn.Module):
             torch.nn.Linear(n, hidden_size, bias=False) for n in num_states
         ])
         self.output_net = torch.nn.Sequential(
+            torch.nn.Linear(hidden_size, hidden_size),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, num_actions),
         )
