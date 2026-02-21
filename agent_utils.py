@@ -1,10 +1,12 @@
 import abc
+import collections
 import dataclasses
 import random
 import statistics
-import collections
-import torch
 from typing import Sequence
+
+import numpy as np
+import torch
 from typing_extensions import override
 
 
@@ -23,14 +25,15 @@ class Agent(abc.ABC):
         self._action_space = action_space
 
     @abc.abstractmethod
-    def select_action(self, state: int, train: bool = False) -> int:
+    def select_action(self, state, train: bool = False) -> int:
+        """Select an action given a state (int or np.ndarray)."""
         pass
 
 
 class RandomAgent(Agent):
 
     @override
-    def select_action(self, state: int, train: bool = False) -> int:
+    def select_action(self, state, train: bool = False) -> int:
         return self._action_space.sample()
 
 
@@ -39,20 +42,30 @@ class DeepQAgent(Agent):
     def __init__(
         self,
         action_space,
-        num_states: int,
-        learning_rate: float,
-        discount_factor:float,
-        epsilon_start: float,
-        epsilon_end: float,
-        epsilon_decay: float,
-        replay_buffer_episodes: int,
-        train_batch_size: int,
-        train_epochs: int,
+        num_states: int | None = None,
+        state_dim: int | None = None,
+        *,
+        learning_rate: float = 1e-4,
+        discount_factor: float = 0.99,
+        epsilon_start: float = 1.0,
+        epsilon_end: float = 0.1,
+        epsilon_decay: float = 0.99,
+        replay_buffer_episodes: int = 1000,
+        train_batch_size: int = 128,
+        train_epochs: int = 1000,
         hidden_size: int = 64,
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._num_states = num_states
+        # Support both discrete (one-hot) and continuous state representations
+        if state_dim is not None:
+            self._input_dim = state_dim
+            self._num_states = None  # continuous mode
+        elif num_states is not None:
+            self._input_dim = num_states
+            self._num_states = num_states  # discrete / one-hot mode
+        else:
+            raise ValueError("Either num_states or state_dim must be provided")
         self._learning_rate = learning_rate
         self._discount_factor = discount_factor
         self._epsilon = epsilon_start
@@ -62,16 +75,30 @@ class DeepQAgent(Agent):
         self._train_epochs = train_epochs
         self._replay_buffer = collections.deque(maxlen=replay_buffer_episodes)
         self._action_value_fn = torch.nn.Sequential(
-            torch.nn.Linear(num_states, hidden_size),
+            torch.nn.Linear(self._input_dim, hidden_size),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, action_space.n),
         ).to(self._device)
         self._optimizer = torch.optim.Adam(self._action_value_fn.parameters(), lr=self._learning_rate)
-    
-    def _predict_rewards(self, state: int) -> torch.Tensor:
-        return self._action_value_fn(torch.nn.functional.one_hot(torch.tensor(state, device=self._device), num_classes=self._num_states).float())
 
-    def select_action(self, state: int, train: bool = False) -> int:
+    def _state_to_tensor(self, state) -> torch.Tensor:
+        """Convert a state (int or array) to a float tensor."""
+        if self._num_states is not None:
+            # Discrete: one-hot encode
+            return torch.nn.functional.one_hot(
+                torch.tensor(state, device=self._device),
+                num_classes=self._num_states,
+            ).float()
+        else:
+            # Continuous vector
+            if isinstance(state, np.ndarray):
+                return torch.tensor(state, dtype=torch.float32, device=self._device)
+            return torch.tensor(state, dtype=torch.float32, device=self._device)
+
+    def _predict_rewards(self, state) -> torch.Tensor:
+        return self._action_value_fn(self._state_to_tensor(state))
+
+    def select_action(self, state, train: bool = False) -> int:
         if train and random.random() < self._epsilon:
             return self._action_space.sample()
         return torch.argmax(self._predict_rewards(state)).item()
@@ -94,10 +121,8 @@ class DeepQAgent(Agent):
             batch = random.sample(all_steps, self._train_batch_size)
             
             # Prepare batch data
-            states = torch.tensor([step.state for step in batch], device=self._device)
             actions = torch.tensor([step.action for step in batch], device=self._device)
             rewards = torch.tensor([step.reward for step in batch], dtype=torch.float32, device=self._device)
-            next_states = torch.tensor([step.state_next for step in batch], device=self._device)
             dones = torch.tensor([step.done for step in batch], dtype=torch.float32, device=self._device)
 
             self._optimizer.zero_grad()
@@ -106,12 +131,16 @@ class DeepQAgent(Agent):
             # We need to gather the Q-values corresponding to the taken actions
             # Output of _predict_rewards(states) is [batch_size, num_actions]
             # We want to select the Q-value for the action taken at each step
-            q_values = self._action_value_fn(torch.nn.functional.one_hot(states, num_classes=self._num_states).float())
+            # Build state tensors using _state_to_tensor for each sample, then stack
+            state_tensors = torch.stack([self._state_to_tensor(step.state) for step in batch])
+            next_state_tensors = torch.stack([self._state_to_tensor(step.state_next) for step in batch])
+
+            q_values = self._action_value_fn(state_tensors)
             q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
             
             # Target Q values
             with torch.no_grad():
-                next_q_values = self._action_value_fn(torch.nn.functional.one_hot(next_states, num_classes=self._num_states).float())
+                next_q_values = self._action_value_fn(next_state_tensors)
                 max_next_q_values = next_q_values.max(1)[0]
                 # If done, target is just reward. Else reward + discount * max_next_q
                 targets = rewards + self._discount_factor * max_next_q_values * (1 - dones)
@@ -137,3 +166,45 @@ class DeepQAgent(Agent):
         self._action_value_fn.load_state_dict(checkpoint['model_state_dict'])
         self._optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self._epsilon = checkpoint['epsilon']
+
+
+class HumanAgent(Agent):
+    """Agent controlled by keyboard input with an action queue.
+
+    Key presses are buffered so that inputs arriving before a cooldown
+    lifts are executed on the exact tick the cooldown expires rather than
+    being dropped.
+    """
+
+    # Action mapping (pygame key constants)
+    _KEY_MAP: dict[int, int] | None = None
+
+    def __init__(self, action_space):
+        super().__init__(action_space)
+        self._action_queue: collections.deque[int] = collections.deque(maxlen=8)
+
+    @staticmethod
+    def _get_key_map() -> dict[int, int]:
+        """Lazy-import pygame constants to avoid import at module level."""
+        import pygame  # noqa: delay import
+        return {
+            pygame.K_UP: 0,     # ACTION_UP
+            pygame.K_DOWN: 1,   # ACTION_DOWN
+            pygame.K_LEFT: 2,   # ACTION_LEFT
+            pygame.K_RIGHT: 3,  # ACTION_RIGHT
+            pygame.K_SPACE: 4,  # ACTION_SHOOT
+        }
+
+    def key_listener(self, event) -> None:
+        """Called by the renderer / run-loop with each pygame event."""
+        import pygame  # noqa
+        if event.type == pygame.KEYDOWN:
+            key_map = self._get_key_map()
+            if event.key in key_map:
+                self._action_queue.append(key_map[event.key])
+
+    @override
+    def select_action(self, state, train: bool = False) -> int:
+        if self._action_queue:
+            return self._action_queue.popleft()
+        return -1  # no-op sentinel; env treats invalid actions as no-op
