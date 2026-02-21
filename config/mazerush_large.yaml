@@ -1,17 +1,17 @@
 env:
   name: "Mazerush"
   config:
-    width: 9
-    height: 9
+    width: 30
+    height: 20
     seed: 42
     fps: 30
     move_cooldown: 5
     laser_duration: 15
     max_laser_items: 3
     laser_spawn_prob: 0.02
-    laser_min_distance: 2
+    laser_min_distance: 5
     laser_spawn_retries: 10
-    max_episode_ticks: 500
+    max_episode_ticks: 3000
 
 players:
   # - type: "HumanAgent"
