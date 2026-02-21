@@ -1,101 +1,16 @@
 import os
 import datetime
-import gymnasium as gym
 import statistics
-import time
 import collections
 import yaml
 import argparse
-from typing import Callable
 
 from agent_utils import Agent, DeepQAgent, RandomAgent, HumanAgent, ActionStep
+from mazerush_env import MazerushEnv
 
 
 # ---------------------------------------------------------------------------
-# Single-agent helpers (Taxi etc.)
-# ---------------------------------------------------------------------------
-
-def run_episode(
-        agent: Agent,
-        env: gym.Env,
-        shape_reward: Callable[[float, bool, bool, int, set[int]], float] | None = None,
-        wait_time: float = 0.1,
-        train: bool = False,
-        verbose: bool = False,
-    ):
-    state, info = env.reset()
-
-    if verbose:
-        print(state)
-        print(info)
-
-    if wait_time > 0:
-        time.sleep(wait_time)
-
-    state_history = set()
-    prev_state = state
-    action_steps = []
-
-    while True:
-        action = agent.select_action(state, train)
-        state, reward, terminated, truncated, info = env.step(action)
-        if shape_reward is not None:
-            reward = shape_reward(reward, truncated, terminated, state, state_history)
-        done = terminated or truncated
-        action_steps.append(ActionStep(action, prev_state, state, reward, done))
-        prev_state = state
-        state_history.add(state)
-
-        if verbose:
-            print(' ============= ')
-            print(f'{state=}')
-            print(f'{reward=}')
-            print(f'{terminated=}')
-            print(f'{truncated=}')
-            print(f'{info=}')
-        if wait_time > 0:
-            time.sleep(wait_time)
-
-        if terminated or truncated:
-            return action_steps, reward
-    return None, None
-
-
-def train_single(
-        agent: DeepQAgent,
-        env: gym.Env,
-        wait_time: float,
-        num_episodes: int,
-        shape_reward: Callable[[float, bool, bool, int, set[int]], float] | None = None,
-        checkpoint_dir: str | None = None,
-        save_interval: int = 1000,
-        train_frequency: int = 100,
-    ):
-    win_history = collections.deque(maxlen=1000)
-    total_wins = 0
-
-    for it in range(num_episodes):
-        action_steps, final_reward = run_episode(agent, env, shape_reward, wait_time, train=True)
-        agent.register_action_steps(action_steps)
-        
-        is_win = final_reward > 0
-        win_history.append(1 if is_win else 0)
-        if is_win:
-            total_wins += 1
-
-        if (it + 1) % train_frequency == 0:
-            loss_history = agent.train()
-            win_rate = sum(win_history) / len(win_history) * 100 if len(win_history) > 0 else 0.0
-            print(f'Episode {it} - Loss: {statistics.mean(loss_history):.6f} - Win Rate: {win_rate:.1f}% ({sum(win_history)} wins) - Total Wins: {total_wins} - Epsilon: {agent._epsilon:.4f}')
-
-        if checkpoint_dir and (it + 1) % save_interval == 0:
-            path = os.path.join(checkpoint_dir, f'checkpoint_{it + 1}.pt')
-            agent.save(path)
-            print(f'Saved checkpoint to {path}')
-
-
-# ---------------------------------------------------------------------------
-# Multi-agent helpers (Mazerush)
+# Agent construction
 # ---------------------------------------------------------------------------
 
 def _build_agents(
@@ -123,9 +38,13 @@ def _build_agents(
     return agents
 
 
-def run_mazerush_episode(
+# ---------------------------------------------------------------------------
+# Episode runner
+# ---------------------------------------------------------------------------
+
+def run_episode(
     agents: list[Agent],
-    env,
+    env: MazerushEnv,
     train: bool = False,
 ) -> tuple[list[list[ActionStep]], list[float]]:
     """Run a single Mazerush episode.
@@ -174,9 +93,13 @@ def run_mazerush_episode(
             return per_player_steps, cumulative_rewards
 
 
-def train_mazerush(
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+
+def train(
     agents: list[Agent],
-    env,
+    env: MazerushEnv,
     num_episodes: int,
     checkpoint_dir: str | None = None,
     save_interval: int = 1000,
@@ -189,7 +112,7 @@ def train_mazerush(
     ]
 
     for ep in range(num_episodes):
-        per_player_steps, cumulative_rewards = run_mazerush_episode(
+        per_player_steps, cumulative_rewards = run_episode(
             agents, env, train=True,
         )
 
@@ -229,7 +152,7 @@ def train_mazerush(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Deep Q-Learning / Mazerush")
+    parser = argparse.ArgumentParser(description="Mazerush")
     parser.add_argument("--config", type=str, default="config/mazerush.yaml", help="Path to configuration file")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--mode", type=str, choices=["train", "test"], default="train", help="Mode: train or test")
@@ -238,102 +161,55 @@ if __name__ == "__main__":
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
-    
-    env_name = config["env"]["name"]
+
     env_config = config["env"].get("config") or {}
+    player_configs = config.get("players", [{"type": "RandomAgent"}, {"type": "RandomAgent"}])
+    num_players = len(player_configs)
 
-    is_mazerush = env_name == "Mazerush"
+    render_mode = "human" if args.mode == "test" else None
+    env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
 
-    if is_mazerush:
-        # ----- Multi-agent Mazerush path -----
-        from mazerush_env import MazerushEnv
+    obs_dim = env.observation_space.shape[0]
+    agent_config = config.get("agent", {})
+    agents = _build_agents(player_configs, env.action_space, obs_dim, agent_config)
 
-        player_configs = config.get("players", [{"type": "RandomAgent"}, {"type": "RandomAgent"}])
-        num_players = len(player_configs)
+    # Resume DeepQAgents
+    resume_path = args.resume or config.get("training", {}).get("resume_path")
+    if resume_path:
+        for i, agent in enumerate(agents):
+            if isinstance(agent, DeepQAgent):
+                p = resume_path.replace(".pt", f"_player{i}.pt")
+                if os.path.exists(p):
+                    agent.load(p)
+                    print(f"Resumed player {i} from {p}")
+                elif os.path.exists(resume_path):
+                    agent.load(resume_path)
+                    print(f"Resumed player {i} from {resume_path}")
 
-        render_mode = "human" if args.mode == "test" else None
-        env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
+    if args.mode == "train":
+        training_cfg = config.get("training", {})
+        num_episodes = args.episodes_override or training_cfg.get("num_episodes", 1000)
 
-        obs_dim = env.observation_space.shape[0]
-        agent_config = config.get("agent", {})
-        agents = _build_agents(player_configs, env.action_space, obs_dim, agent_config)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_dir = f"out/{timestamp}"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        print(f"Checkpoints will be saved to {checkpoint_dir}")
 
-        # Resume DeepQAgents
-        resume_path = args.resume or config.get("training", {}).get("resume_path")
-        if resume_path:
-            for i, agent in enumerate(agents):
-                if isinstance(agent, DeepQAgent):
-                    p = resume_path.replace(".pt", f"_player{i}.pt")
-                    if os.path.exists(p):
-                        agent.load(p)
-                        print(f"Resumed player {i} from {p}")
-                    elif os.path.exists(resume_path):
-                        agent.load(resume_path)
-                        print(f"Resumed player {i} from {resume_path}")
-
-        if args.mode == "train":
-            training_cfg = config.get("training", {})
-            num_episodes = args.episodes_override or training_cfg.get("num_episodes", 1000)
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            checkpoint_dir = f"out/{timestamp}"
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            print(f"Checkpoints will be saved to {checkpoint_dir}")
-
-            train_mazerush(
-                agents, env,
-                num_episodes=num_episodes,
-                checkpoint_dir=checkpoint_dir,
-                save_interval=training_cfg.get("save_interval", 1000),
-                train_frequency=training_cfg.get("train_frequency", 50),
-            )
-        else:
-            # Test / play mode
-            print("Starting Mazerush in play mode. Close the window to exit.")
-            while True:
-                per_player_steps, rewards = run_mazerush_episode(agents, env, train=False)
-                print(f"Episode finished. Rewards: {rewards}")
-                # Re-check if window was closed
-                import pygame
-                if not pygame.display.get_init():
-                    break
-        env.close()
-
-    else:
-        # ----- Single-agent path (Taxi etc.) -----
-        render_mode = "human" if args.mode == "test" else None
-        env = gym.make(env_name, **(env_config or {}), render_mode=render_mode)
-
-        agent_config = config["agent"]
-        deep_q_agent = DeepQAgent(
-            env.action_space,
-            env.observation_space.n,
-            **agent_config,
+        train(
+            agents, env,
+            num_episodes=num_episodes,
+            checkpoint_dir=checkpoint_dir,
+            save_interval=training_cfg.get("save_interval", 1000),
+            train_frequency=training_cfg.get("train_frequency", 50),
         )
+    else:
+        # Test / play mode
+        print("Starting Mazerush in play mode. Close the window to exit.")
+        while True:
+            per_player_steps, rewards = run_episode(agents, env, train=False)
+            print(f"Episode finished. Rewards: {rewards}")
+            import pygame
+            if not pygame.display.get_init():
+                break
 
-        resume_path = args.resume or config["training"].get("resume_path")
-        if resume_path and os.path.exists(resume_path):
-            deep_q_agent.load(resume_path)
-            print(f"Resumed from {resume_path}")
-        elif args.mode == "test" and not resume_path:
-            print("Warning: Running in test mode without a checkpoint/resume path.")
-
-        if args.mode == "train":
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            checkpoint_dir = f"out/{timestamp}"
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            print(f"Checkpoints will be saved to {checkpoint_dir}")
-
-            num_episodes = args.episodes_override or config["training"].get("num_episodes", 1000)
-            train_single(
-                deep_q_agent,
-                env,
-                wait_time=config["training"].get("wait_time", 0),
-                num_episodes=num_episodes,
-                checkpoint_dir=checkpoint_dir,
-                save_interval=config["training"].get("save_interval", 1000),
-                train_frequency=config["training"].get("train_frequency", 100),
-            )
-        elif args.mode == "test":
-            for _ in range(100):
-                run_episode(deep_q_agent, env, wait_time=0.1, train=False, verbose=True)
+    env.close()
