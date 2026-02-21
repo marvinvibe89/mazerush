@@ -46,14 +46,15 @@ def run_episode(
     agents: list[Agent],
     env: MazerushEnv,
     train: bool = False,
-) -> tuple[list[list[ActionStep]], list[float]]:
+) -> tuple[list[list[ActionStep]], list[float], list[bool]]:
     """Run a single Mazerush episode.
 
-    Returns per-player action step lists and final rewards.
+    Returns per-player action step lists, final cumulative rewards, and win status.
     """
     obs_n, info = env.reset()
     per_player_steps: list[list[ActionStep]] = [[] for _ in agents]
     cumulative_rewards = [0.0] * len(agents)
+    is_wins = [False] * len(agents)
 
     while True:
         # Collect events for human agents
@@ -68,16 +69,15 @@ def run_episode(
         for event in events:
             if event.type == pygame.QUIT:
                 env.close()
-                return per_player_steps, cumulative_rewards
+                return per_player_steps, cumulative_rewards, is_wins
 
         # Select actions
         action_n = [
             agent.select_action(obs, train)
             for agent, obs in zip(agents, obs_n)
         ]
-        # Replace invalid actions (e.g. HumanAgent no-op = -1) with a
-        # value outside the movement/shoot range so the env does nothing.
-        action_n = [a if 0 <= a < env.action_space.n else -1 for a in action_n]
+        # Replace invalid actions with ACTION_NOTHING (5)
+        action_n = [a if 0 <= a < env.action_space.n else 5 for a in action_n]
 
         prev_obs_n = obs_n
         obs_n, reward_n, done_n, truncated_n, info_n = env.step(action_n)
@@ -88,9 +88,11 @@ def run_episode(
                 ActionStep(action_n[i], prev_obs_n[i], obs_n[i], reward_n[i], done)
             )
             cumulative_rewards[i] += reward_n[i]
+            if info_n[i].get("result") == "win":
+                is_wins[i] = True
 
         if any(done_n) or any(truncated_n):
-            return per_player_steps, cumulative_rewards
+            return per_player_steps, cumulative_rewards, is_wins
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +112,12 @@ def train(
     recent_wins: list[collections.deque] = [
         collections.deque(maxlen=200) for _ in agents
     ]
+    recent_rewards: list[collections.deque] = [
+        collections.deque(maxlen=200) for _ in agents
+    ]
 
     for ep in range(num_episodes):
-        per_player_steps, cumulative_rewards = run_episode(
+        per_player_steps, cumulative_rewards, is_wins = run_episode(
             agents, env, train=True,
         )
 
@@ -120,8 +125,9 @@ def train(
         for i, agent in enumerate(agents):
             if isinstance(agent, DeepQAgent):
                 agent.register_action_steps(per_player_steps[i])
-                won = cumulative_rewards[i] > 0
+                won = is_wins[i]
                 recent_wins[i].append(1 if won else 0)
+                recent_rewards[i].append(cumulative_rewards[i])
                 if won:
                     win_counts[i] += 1
 
@@ -130,10 +136,12 @@ def train(
                 if isinstance(agent, DeepQAgent):
                     loss_hist = agent.train()
                     wr = sum(recent_wins[i]) / max(len(recent_wins[i]), 1) * 100
+                    avg_reward = sum(recent_rewards[i]) / max(len(recent_rewards[i]), 1)
                     avg_loss = statistics.mean(loss_hist) if loss_hist else 0.0
                     print(
                         f"[Player {i}] Ep {ep} - Loss: {avg_loss:.6f} "
-                        f"- Win Rate: {wr:.1f}% - Total Wins: {win_counts[i]} "
+                        f"- Win Rate: {wr:.1f}% - Avg Reward: {avg_reward:.2f} "
+                        f"- Total Wins: {win_counts[i]} "
                         f"- Eps: {agent._epsilon:.4f}"
                     )
 
@@ -206,8 +214,8 @@ if __name__ == "__main__":
         # Test / play mode
         print("Starting Mazerush in play mode. Close the window to exit.")
         while True:
-            per_player_steps, rewards = run_episode(agents, env, train=False)
-            print(f"Episode finished. Rewards: {rewards}")
+            per_player_steps, rewards, is_wins = run_episode(agents, env, train=False)
+            print(f"Episode finished. Rewards: {rewards}, Wins: {is_wins}")
             import pygame
             if not pygame.display.get_init():
                 break

@@ -189,7 +189,7 @@ class HumanAgent(Agent):
     def select_action(self, state, train: bool = False) -> int:
         if self._action_queue:
             return self._action_queue.popleft()
-        return -1  # no-op sentinel; env treats invalid actions as no-op
+        return 5  # ACTION_NOTHING
 
 
 class _DeepQNetwork(torch.nn.Module):
