@@ -186,17 +186,19 @@ def main():
     agents = _build_agents(player_configs, env.action_space, num_states, agent_config)
 
     # Resume DeepQAgents
-    resume_path = args.resume or config.get("training", {}).get("resume_path")
-    if resume_path:
+    resume_paths = args.resume or config.get("training", {}).get("resume_paths")
+    if resume_paths:
+        resume_paths = resume_paths.split(",")
+        resume_idx = 0
         for i, agent in enumerate(agents):
             if isinstance(agent, DeepQAgent):
-                p = resume_path.replace(".pt", f"_player{i}.pt")
-                if os.path.exists(p):
-                    agent.load(p)
-                    print(f"Resumed player {i} from {p}")
-                elif os.path.exists(resume_path):
+                resume_path = resume_paths[resume_idx]
+                resume_idx = (resume_idx + 1) % len(resume_paths)
+                if os.path.exists(resume_path):
                     agent.load(resume_path)
                     print(f"Resumed player {i} from {resume_path}")
+                else:
+                    raise FileNotFoundError(f"Checkpoint not found: {resume_path}")
 
     if args.mode == "train":
         training_cfg = config.get("training", {})
