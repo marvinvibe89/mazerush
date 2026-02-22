@@ -61,6 +61,7 @@ class DeepQAgent(Agent):
         train_batch_size: int = 128,
         train_epochs: int = 1000,
         hidden_size: int = 64,
+        tau: float = 0.005,
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,8 +73,13 @@ class DeepQAgent(Agent):
         self._epsilon_decay = epsilon_decay
         self._train_batch_size = train_batch_size
         self._train_epochs = train_epochs
+        self._tau = tau
         self._replay_buffer = collections.deque(maxlen=replay_buffer_episodes)
         self._action_value_fn = _DeepQNetwork(self._num_states, hidden_size, action_space.n).to(self._device)
+        self._target_net = _DeepQNetwork(self._num_states, hidden_size, action_space.n).to(self._device)
+        self._target_net.load_state_dict(self._action_value_fn.state_dict())
+        for param in self._target_net.parameters():
+            param.requires_grad = False
         self._optimizer = torch.optim.Adam(self._action_value_fn.parameters(), lr=self._learning_rate)
 
     def _state_to_tensor(self, state) -> torch.Tensor:
@@ -136,15 +142,20 @@ class DeepQAgent(Agent):
             
             # Target Q values
             with torch.no_grad():
-                next_q_values = self._action_value_fn(next_state_tensors)
+                next_q_values = self._target_net(next_state_tensors)
                 max_next_q_values = next_q_values.max(1)[0]
                 # If done, target is just reward. Else reward + discount * max_next_q
                 targets = rewards + self._discount_factor * max_next_q_values * (1 - dones)
             
             loss = torch.nn.functional.mse_loss(q_values, targets)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self._action_value_fn.parameters(), max_norm=1.0)
             self._optimizer.step()
             loss_history.append(loss.item())
+
+            # Soft update of target network
+            for target_param, param in zip(self._target_net.parameters(), self._action_value_fn.parameters()):
+                target_param.data.copy_(self._tau * param.data + (1.0 - self._tau) * target_param.data)
         
         # Decay epsilon after each training episode
         self._epsilon = max(self._epsilon_end, self._epsilon * self._epsilon_decay)
@@ -153,6 +164,7 @@ class DeepQAgent(Agent):
     def save(self, path: str) -> None:
         torch.save({
             'model_state_dict': self._action_value_fn.state_dict(),
+            'target_state_dict': self._target_net.state_dict(),
             'optimizer_state_dict': self._optimizer.state_dict(),
             'epsilon': self._epsilon
         }, path)
@@ -160,6 +172,7 @@ class DeepQAgent(Agent):
     def load(self, path: str) -> None:
         checkpoint = torch.load(path)
         self._action_value_fn.load_state_dict(checkpoint['model_state_dict'])
+        self._target_net.load_state_dict(checkpoint['target_state_dict'])
         self._optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self._epsilon = checkpoint['epsilon']
 

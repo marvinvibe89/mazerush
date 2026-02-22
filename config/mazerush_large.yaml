@@ -25,12 +25,12 @@ agent:  # DeepQAgent config (used when a player type is DeepQAgent)
   epsilon_start: 1.0
   epsilon_end: 0.1
   epsilon_decay: 0.998
-  replay_buffer_episodes: 1000
+  replay_buffer_episodes: 5000
   train_batch_size: 128
-  train_epochs: 1000
-  hidden_size: 128
+  train_epochs: 100
+  hidden_size: 256
 
 training:
   num_episodes: 10000000
   save_interval: 1000
-  train_frequency: 50
+  train_frequency: 10
