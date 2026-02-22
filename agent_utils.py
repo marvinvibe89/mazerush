@@ -81,10 +81,11 @@ class DeepQAgent(Agent):
         return torch.tensor(state, dtype=torch.float32, device=self._device)
 
     def _predict_rewards(self, state) -> torch.Tensor:
-        x = self._state_to_tensor(state)
-        if x.dim() == 1:
-            x = x.unsqueeze(0)  # Add batch dimension
-        return self._action_value_fn(x)
+        with torch.no_grad():
+            x = torch.tensor(state, dtype=torch.float32, device=self._device)
+            if x.dim() == 1:
+                x = x.unsqueeze(0)  # Add batch dimension
+            return self._action_value_fn(x)
 
     def select_action(self, state, train: bool = False) -> int:
         if train and random.random() < self._epsilon:
@@ -119,9 +120,8 @@ class DeepQAgent(Agent):
             # We need to gather the Q-values corresponding to the taken actions
             # Output of _predict_rewards(states) is [batch_size, num_actions]
             # We want to select the Q-value for the action taken at each step
-            # Build state tensors using _state_to_tensor for each sample, then stack
-            state_tensors = torch.stack([self._state_to_tensor(step.state) for step in batch])
-            next_state_tensors = torch.stack([self._state_to_tensor(step.state_next) for step in batch])
+            state_tensors = torch.tensor(np.array([step.state for step in batch]), dtype=torch.float32, device=self._device)
+            next_state_tensors = torch.tensor(np.array([step.state_next for step in batch]), dtype=torch.float32, device=self._device)
 
             q_values = self._action_value_fn(state_tensors)
             q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -203,6 +203,8 @@ class _DeepQNetwork(torch.nn.Module):
         
         self.output_net = torch.nn.Sequential(
             torch.nn.Linear(num_states, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, num_actions),
         )

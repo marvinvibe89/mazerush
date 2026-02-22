@@ -213,7 +213,7 @@ class MazerushEnv(gym.Env):
         #   per laser item slot: x, y, exists  (3 components)
         self._player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
         self._item_states = [self.width, self.height, 2]
-        self._total_dims = sum(self._player_states * self.num_players + self._item_states * self.max_laser_items)
+        self._total_dims = sum(self._player_states * self.num_players + self._item_states * self.max_laser_items) + self.num_players * 3 + self.max_laser_items * 2
         self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(self._total_dims,), dtype=np.float32)
 
         # Runtime state (populated in reset)
@@ -563,6 +563,7 @@ class MazerushEnv(gym.Env):
         def _write_player(p: _Player):
             vals = [p.x, p.y, p.move_cooldown_remaining, int(p.status)]
             _write_one_hots(vals, self._player_states)
+            obs_list.extend([p.x / self.width, p.y / self.height, p.move_cooldown_remaining / self.move_cooldown])
 
         # Own player first
         _write_player(self.players[player_idx])
@@ -576,9 +577,13 @@ class MazerushEnv(gym.Env):
             if slot < len(self.laser_items):
                 ix, iy = self.laser_items[slot]
                 _write_one_hots([ix, iy, 1], self._item_states)  # exists
+                obs_list.extend([ix / self.width, iy / self.height])
             else:
                 _write_one_hots([0, 0, 0], self._item_states)
+                obs_list.extend([0., 0.])
 
+        if len(obs_list) != self._total_dims:
+            raise ValueError(f"Observation dimension mismatch: {len(obs_list)} != {self._total_dims}")
         return np.array(obs_list, dtype=np.float32)
 
     # ------------------------------------------------------------------
