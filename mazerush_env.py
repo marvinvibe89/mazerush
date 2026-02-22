@@ -211,11 +211,10 @@ class MazerushEnv(gym.Env):
         #   own: x, y, cooldown, status  (4 components)
         #   per other player: same 4 components
         #   per laser item slot: x, y, exists  (3 components)
-        player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
-        item_states = [self.width, self.height, 2]
-        self._num_states = player_states * self.num_players + item_states * self.max_laser_items
-
-        self.observation_space = spaces.MultiDiscrete(self._num_states)
+        self._player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
+        self._item_states = [self.width, self.height, 2]
+        self._total_dims = sum(self._player_states * self.num_players + self._item_states * self.max_laser_items)
+        self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(self._total_dims,), dtype=np.float32)
 
         # Runtime state (populated in reset)
         self.players: list[_Player] = []
@@ -553,16 +552,17 @@ class MazerushEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self, player_idx: int) -> np.ndarray:
-        obs = np.zeros(len(self._num_states), dtype=np.int32)
-        offset = 0
+        obs_list = []
+
+        def _write_one_hots(vals: list[int], dims: list[int]):
+            for val, dim in zip(vals, dims):
+                one_hot = [0.0] * dim
+                one_hot[val] = 1.0
+                obs_list.extend(one_hot)
 
         def _write_player(p: _Player):
-            nonlocal offset
-            obs[offset] = p.x
-            obs[offset + 1] = p.y
-            obs[offset + 2] = p.move_cooldown_remaining
-            obs[offset + 3] = int(p.status)
-            offset += 4
+            vals = [p.x, p.y, p.move_cooldown_remaining, int(p.status)]
+            _write_one_hots(vals, self._player_states)
 
         # Own player first
         _write_player(self.players[player_idx])
@@ -575,16 +575,11 @@ class MazerushEnv(gym.Env):
         for slot in range(self.max_laser_items):
             if slot < len(self.laser_items):
                 ix, iy = self.laser_items[slot]
-                obs[offset] = ix
-                obs[offset + 1] = iy
-                obs[offset + 2] = 1  # exists
+                _write_one_hots([ix, iy, 1], self._item_states)  # exists
             else:
-                obs[offset] = 0
-                obs[offset + 1] = 0
-                obs[offset + 2] = 0
-            offset += 3
+                _write_one_hots([0, 0, 0], self._item_states)
 
-        return obs
+        return np.array(obs_list, dtype=np.float32)
 
     # ------------------------------------------------------------------
     # Rendering

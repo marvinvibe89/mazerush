@@ -181,7 +181,7 @@ def main():
     render_mode = "human" if args.mode == "test" else None
     env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
 
-    num_states = env.observation_space.nvec.tolist()
+    num_states = env.observation_space.shape[0]
     agent_config = config.get("agent", {})
     agents = _build_agents(player_configs, env.action_space, num_states, agent_config)
 

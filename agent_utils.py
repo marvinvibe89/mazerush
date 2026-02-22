@@ -50,7 +50,7 @@ class DeepQAgent(Agent):
     def __init__(
         self,
         action_space,
-        num_states: Sequence[int],
+        num_states: int,
         *,
         learning_rate: float = 1e-4,
         discount_factor: float = 0.99,
@@ -64,7 +64,7 @@ class DeepQAgent(Agent):
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._num_states = tuple(num_states)
+        self._num_states = num_states
         self._learning_rate = learning_rate
         self._discount_factor = discount_factor
         self._epsilon = epsilon_start
@@ -77,8 +77,8 @@ class DeepQAgent(Agent):
         self._optimizer = torch.optim.Adam(self._action_value_fn.parameters(), lr=self._learning_rate)
 
     def _state_to_tensor(self, state) -> torch.Tensor:
-        """Convert a state array to a tensor."""
-        return torch.tensor(state, dtype=torch.long, device=self._device)
+        """Convert a state float array to a tensor."""
+        return torch.tensor(state, dtype=torch.float32, device=self._device)
 
     def _predict_rewards(self, state) -> torch.Tensor:
         x = self._state_to_tensor(state)
@@ -197,27 +197,17 @@ class HumanAgent(Agent):
 
 
 class _DeepQNetwork(torch.nn.Module):
-    def __init__(self, num_states: Sequence[int], hidden_size: int, num_actions: int):
+    def __init__(self, num_states: int, hidden_size: int, num_actions: int):
         super().__init__()
         self.num_states = num_states
-        # Create an embedding projection for each component
-        self.embeddings = torch.nn.ModuleList([
-            torch.nn.Linear(n, hidden_size, bias=False) for n in num_states
-        ])
+        
         self.output_net = torch.nn.Sequential(
-            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.Linear(num_states, hidden_size),
             torch.nn.ReLU(),
             torch.nn.Linear(hidden_size, num_actions),
         )
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        # state is [batch_size, num_components]
+        # state is [batch_size, num_states]
         # output shape is [batch_size, num_actions]
-        embeds = []
-        for i, n in enumerate(self.num_states):
-            x_one_hot = torch.nn.functional.one_hot(state[..., i], num_classes=n).float()
-            embeds.append(self.embeddings[i](x_one_hot))
-        
-        # Sum the embeddings
-        h = torch.stack(embeds, dim=0).sum(dim=0)
-        return self.output_net(h)
+        return self.output_net(state)
