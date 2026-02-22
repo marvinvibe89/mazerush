@@ -93,7 +93,15 @@ class DeepQAgent(Agent):
         return torch.argmax(self._predict_rewards(state)[0]).item()
     
     def register_action_steps(self, action_steps: list[ActionStep]):
-        self._replay_buffer.append(action_steps)
+        tensor_steps = []
+        for step in action_steps:
+            tensor_step = dataclasses.replace(
+                step,
+                state=torch.tensor(step.state, dtype=torch.float32, device=self._device),
+                state_next=torch.tensor(step.state_next, dtype=torch.float32, device=self._device)
+            )
+            tensor_steps.append(tensor_step)
+        self._replay_buffer.append(tensor_steps)
     
     def train(self) -> Sequence[float]:
         
@@ -120,8 +128,8 @@ class DeepQAgent(Agent):
             # We need to gather the Q-values corresponding to the taken actions
             # Output of _predict_rewards(states) is [batch_size, num_actions]
             # We want to select the Q-value for the action taken at each step
-            state_tensors = torch.tensor(np.array([step.state for step in batch]), dtype=torch.float32, device=self._device)
-            next_state_tensors = torch.tensor(np.array([step.state_next for step in batch]), dtype=torch.float32, device=self._device)
+            state_tensors = torch.stack([step.state for step in batch])
+            next_state_tensors = torch.stack([step.state_next for step in batch])
 
             q_values = self._action_value_fn(state_tensors)
             q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
