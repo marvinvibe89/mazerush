@@ -112,10 +112,10 @@ def train(
     """Training loop for Mazerush with multiple agents."""
     win_counts = [0] * len(agents)
     recent_wins: list[collections.deque] = [
-        collections.deque(maxlen=200) for _ in agents
+        collections.deque(maxlen=1000) for _ in agents
     ]
     recent_rewards: list[collections.deque] = [
-        collections.deque(maxlen=200) for _ in agents
+        collections.deque(maxlen=1000) for _ in agents
     ]
 
     for ep in range(num_episodes):
