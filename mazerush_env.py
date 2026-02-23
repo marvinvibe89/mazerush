@@ -174,6 +174,7 @@ class MazerushEnv(gym.Env):
         laser_min_distance: int = 5,
         laser_spawn_retries: int = 10,
         max_episode_ticks: int = 3000,
+        fov_size: int = 9,
         render_mode: str | None = None,
     ):
         super().__init__()
@@ -204,21 +205,42 @@ class MazerushEnv(gym.Env):
             if self.grid[x, y] == CellType.EMPTY
         ]
 
+        # Cache a padded grid for fast FOV slicing
+        # Padding is equal to fov_radius on all sides, filled with WALL (1.0)
+        self._padded_wall_grid = np.pad(
+            (self.grid == CellType.WALL).astype(np.float32),
+            pad_width=fov_size // 2,
+            mode='constant',
+            constant_values=1.0
+        )
+
         # Action / observation spaces ---
         self.action_space = spaces.Discrete(NUM_ACTIONS)
 
         # Observation vector per player components:
         #   own: x, y, cooldown, status  (4 components)
-        #   per other player: same 4 components
-        #   per laser item slot: x, y, exists  (3 components)
+        #   per other player: x, y, cooldown, status, visible (5 components)
+        #   per laser item slot: x, y, visible (3 components)
+        #   map window: 9x9 surrounding binary matrix (81 components)
+        self.fov_size = fov_size
+        self.fov_radius = self.fov_size // 2
+
         self._player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
-        self._item_states = [self.width, self.height, 2]
-        self._total_dims = sum(self._player_states * self.num_players + self._item_states * self.max_laser_items) + self.num_players * 3 + self.max_laser_items * 2
+        self._other_player_states = [self.fov_size, self.fov_size, max(self.move_cooldown, self.laser_duration) + 1, 3, 2]
+        self._item_states = [self.fov_size, self.fov_size, 2]
+
+        own_dim = sum(self._player_states) + 3
+        other_dim = sum(self._other_player_states) + 3
+        item_dim = sum(self._item_states) + 2
+        map_dim = self.fov_size * self.fov_size
+
+        self._total_dims = own_dim + other_dim * (self.num_players - 1) + item_dim * self.max_laser_items + map_dim
         self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(self._total_dims,), dtype=np.float32)
 
         # Runtime state (populated in reset)
         self.players: list[_Player] = []
         self.laser_items: list[tuple[int, int]] = []
+        self.occupied_cells: set[tuple[int, int]] = set()
         # Active beams: list of (player_idx, list_of_cells, ticks_remaining)
         self.active_beams: list[tuple[int, list[tuple[int, int]], int]] = []
         # Beam grid: for each cell, set of player indices whose beam covers it
@@ -249,27 +271,27 @@ class MazerushEnv(gym.Env):
 
         # Spawn players at distinct empty cells far apart
         self.players = []
-        occupied: set[tuple[int, int]] = set()
+        self.occupied_cells.clear()
         spawn_candidates = list(self._empty_cells)
         self._episode_rng.shuffle(spawn_candidates)
 
         for _ in range(self.num_players):
             for cx, cy in spawn_candidates:
-                if (cx, cy) not in occupied:
+                if (cx, cy) not in self.occupied_cells:
                     # Try to keep distance from existing players
                     if all(
                         abs(cx - p.x) + abs(cy - p.y) >= min(self.width, self.height) // 3
                         for p in self.players
                     ):
                         self.players.append(_Player(cx, cy))
-                        occupied.add((cx, cy))
+                        self.occupied_cells.add((cx, cy))
                         break
             else:
                 # Fallback: just pick any free cell
                 for cx, cy in spawn_candidates:
-                    if (cx, cy) not in occupied:
+                    if (cx, cy) not in self.occupied_cells:
                         self.players.append(_Player(cx, cy))
-                        occupied.add((cx, cy))
+                        self.occupied_cells.add((cx, cy))
                         break
 
         obs_n = [self._get_obs(i) for i in range(self.num_players)]
@@ -335,11 +357,10 @@ class MazerushEnv(gym.Env):
                             0 <= nx < self.width
                             and 0 <= ny < self.height
                             and self.grid[nx, ny] != CellType.WALL
-                            and not any(
-                                op.x == nx and op.y == ny and op.alive
-                                for j, op in enumerate(self.players) if j != i
-                            )
+                            and (nx, ny) not in self.occupied_cells
                         ):
+                            self.occupied_cells.remove((p.x, p.y))
+                            self.occupied_cells.add((nx, ny))
                             p.x = nx
                             p.y = ny
                             p.move_cooldown_remaining = self.move_cooldown
@@ -464,36 +485,68 @@ class MazerushEnv(gym.Env):
                 obs[idx + val] = 1.0
                 idx += dim
 
-        def _write_player(p: _Player):
-            nonlocal idx
-            _write_one_hots(
-                [p.x, p.y, p.move_cooldown_remaining, int(p.status)],
-                self._player_states
-            )
-            obs[idx] = p.x / self.width
-            obs[idx+1] = p.y / self.height
-            obs[idx+2] = p.move_cooldown_remaining / self.move_cooldown
-            idx += 3
-
         # Own player first
-        _write_player(self.players[player_idx])
+        own_p = self.players[player_idx]
+        _write_one_hots(
+            [own_p.x, own_p.y, own_p.move_cooldown_remaining, int(own_p.status)],
+            self._player_states
+        )
+        obs[idx] = own_p.x / self.width
+        obs[idx+1] = own_p.y / self.height
+        obs[idx+2] = own_p.move_cooldown_remaining / self.move_cooldown
+        idx += 3
+
         # Other players
         for i, p in enumerate(self.players):
             if i != player_idx:
-                _write_player(p)
+                in_range = (
+                    abs(p.x - own_p.x) <= self.fov_radius and
+                    abs(p.y - own_p.y) <= self.fov_radius and
+                    p.alive
+                )
+                if in_range:
+                    rel_x = p.x - own_p.x + self.fov_radius
+                    rel_y = p.y - own_p.y + self.fov_radius
+                    _write_one_hots(
+                        [rel_x, rel_y, p.move_cooldown_remaining, int(p.status), 1],
+                        self._other_player_states
+                    )
+                    obs[idx] = rel_x / self.fov_size
+                    obs[idx+1] = rel_y / self.fov_size
+                    obs[idx+2] = p.move_cooldown_remaining / self.move_cooldown
+                    idx += 3
+                else:
+                    _write_one_hots([0, 0, 0, 0, 0], self._other_player_states)
+                    idx += 3
 
         # Laser items
         for slot in range(self.max_laser_items):
             if slot < len(self.laser_items):
                 ix, iy = self.laser_items[slot]
-                _write_one_hots([ix, iy, 1], self._item_states)  # exists
-                obs[idx] = ix / self.width
-                obs[idx+1] = iy / self.height
-                idx += 2
+                in_range = (
+                    abs(ix - own_p.x) <= self.fov_radius and
+                    abs(iy - own_p.y) <= self.fov_radius
+                )
+                if in_range:
+                    rel_x = ix - own_p.x + self.fov_radius
+                    rel_y = iy - own_p.y + self.fov_radius
+                    _write_one_hots([rel_x, rel_y, 1], self._item_states)  # visible
+                    obs[idx] = rel_x / self.fov_size
+                    obs[idx+1] = rel_y / self.fov_size
+                    idx += 2
+                else:
+                    _write_one_hots([0, 0, 0], self._item_states)
+                    idx += 2
             else:
                 _write_one_hots([0, 0, 0], self._item_states)
                 idx += 2
 
+        # Map memory (9x9) using fast NumPy slicing
+        slice_vals = self._padded_wall_grid[
+            own_p.x : own_p.x + self.fov_size,
+            own_p.y : own_p.y + self.fov_size
+        ]
+        obs[idx : idx + self.fov_size * self.fov_size] = slice_vals.flatten()
         return obs
 
     # ------------------------------------------------------------------

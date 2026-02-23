@@ -21,11 +21,11 @@ players:
 
 agent:  # DeepQAgent config (used when a player type is DeepQAgent)
   learning_rate: 5.0e-5
-  discount_factor: 0.99
+  discount_factor: 0.999
   epsilon_start: 1.0
   epsilon_end: 0.1
   epsilon_decay: 0.998
-  replay_buffer_episodes: 5000
+  replay_buffer_episodes: 500
   train_batch_size: 128
   train_epochs: 100
   hidden_size: 256
