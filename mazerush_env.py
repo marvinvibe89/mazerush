@@ -290,46 +290,36 @@ class MazerushEnv(gym.Env):
         truncated_n = [False] * self.num_players
         info_n: list[dict[str, Any]] = [{} for _ in range(self.num_players)]
 
-        # --- 1. Decrement cooldowns / beam timers ---
+        # --- 1 & 2. Handle cooldowns, beam expiration, and new shoots ---
         for p in self.players:
             if p.move_cooldown_remaining > 0:
                 p.move_cooldown_remaining -= 1
 
-        # Tick down active beams
-        surviving_beams: list[tuple[int, list[tuple[int, int]], int]] = []
+        new_active_beams = []
+        beams_changed = False
+
         for pidx, cells, ticks in self.active_beams:
-            if ticks - 1 > 0:
-                surviving_beams.append((pidx, cells, ticks - 1))
+            if ticks > 1:
+                new_active_beams.append((pidx, cells, ticks - 1))
             else:
-                # Beam expired – player re-enters NEUTRAL
+                beams_changed = True
                 p = self.players[pidx]
                 if p.status == PlayerStatus.SHOOTING:
                     p.status = PlayerStatus.NEUTRAL
                     p.move_cooldown_remaining = self.move_cooldown
-        self.active_beams = surviving_beams
-        self._rebuild_beam_grid()
 
-        # --- 2. Resolve simultaneous shoots first ---
-        shooters: list[int] = []
         for i, (act, p) in enumerate(zip(action_n, self.players)):
             if act == ACTION_SHOOT and p.status == PlayerStatus.HAS_LASER and p.alive:
-                shooters.append(i)
+                beams_changed = True
+                beam_cells = _compute_beam_cells(self.grid, p.x, p.y, self.width, self.height)
+                p.status = PlayerStatus.SHOOTING
+                p.shoot_ticks_remaining = self.laser_duration
+                p.move_cooldown_remaining = self.laser_duration
+                new_active_beams.append((i, beam_cells, self.laser_duration))
 
-        # Compute beams for all shooters
-        new_beams: list[tuple[int, list[tuple[int, int]]]] = []
-        for pidx in shooters:
-            p = self.players[pidx]
-            beam_cells = _compute_beam_cells(self.grid, p.x, p.y, self.width, self.height)
-            new_beams.append((pidx, beam_cells))
-
-        for pidx, beam_cells in new_beams:
-            p = self.players[pidx]
-            p.status = PlayerStatus.SHOOTING
-            p.shoot_ticks_remaining = self.laser_duration
-            p.move_cooldown_remaining = self.laser_duration
-            self.active_beams.append((pidx, beam_cells, self.laser_duration))
-
-        self._rebuild_beam_grid()
+        self.active_beams = new_active_beams
+        if beams_changed:
+            self._rebuild_beam_grid()
 
         # --- 3. Check beam kills ---
         self._resolve_kills(reward_n, done_n, info_n)
@@ -428,7 +418,10 @@ class MazerushEnv(gym.Env):
         self.beam_grid = {}
         for pidx, cells, _ in self.active_beams:
             for c in cells:
-                self.beam_grid.setdefault(c, set()).add(pidx)
+                if c not in self.beam_grid:
+                    self.beam_grid[c] = {pidx}
+                else:
+                    self.beam_grid[c].add(pidx)
 
     # ------------------------------------------------------------------
     # Laser item spawning
@@ -462,18 +455,25 @@ class MazerushEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self, player_idx: int) -> np.ndarray:
-        obs_list = []
+        obs = np.zeros(self._total_dims, dtype=np.float32)
+        idx = 0
 
         def _write_one_hots(vals: list[int], dims: list[int]):
+            nonlocal idx
             for val, dim in zip(vals, dims):
-                one_hot = [0.0] * dim
-                one_hot[val] = 1.0
-                obs_list.extend(one_hot)
+                obs[idx + val] = 1.0
+                idx += dim
 
         def _write_player(p: _Player):
-            vals = [p.x, p.y, p.move_cooldown_remaining, int(p.status)]
-            _write_one_hots(vals, self._player_states)
-            obs_list.extend([p.x / self.width, p.y / self.height, p.move_cooldown_remaining / self.move_cooldown])
+            nonlocal idx
+            _write_one_hots(
+                [p.x, p.y, p.move_cooldown_remaining, int(p.status)],
+                self._player_states
+            )
+            obs[idx] = p.x / self.width
+            obs[idx+1] = p.y / self.height
+            obs[idx+2] = p.move_cooldown_remaining / self.move_cooldown
+            idx += 3
 
         # Own player first
         _write_player(self.players[player_idx])
@@ -487,14 +487,14 @@ class MazerushEnv(gym.Env):
             if slot < len(self.laser_items):
                 ix, iy = self.laser_items[slot]
                 _write_one_hots([ix, iy, 1], self._item_states)  # exists
-                obs_list.extend([ix / self.width, iy / self.height])
+                obs[idx] = ix / self.width
+                obs[idx+1] = iy / self.height
+                idx += 2
             else:
                 _write_one_hots([0, 0, 0], self._item_states)
-                obs_list.extend([0., 0.])
+                idx += 2
 
-        if len(obs_list) != self._total_dims:
-            raise ValueError(f"Observation dimension mismatch: {len(obs_list)} != {self._total_dims}")
-        return np.array(obs_list, dtype=np.float32)
+        return obs
 
     # ------------------------------------------------------------------
     # Rendering
