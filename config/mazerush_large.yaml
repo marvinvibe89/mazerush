@@ -12,6 +12,7 @@ env:
     laser_min_distance: 5
     laser_spawn_retries: 10
     max_episode_ticks: 3000
+    fov_size: 13
 
 players:
   # - type: "HumanAgent"
