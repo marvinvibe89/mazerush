@@ -168,6 +168,7 @@ def main():
     parser.add_argument("--config", type=str, default="config/mazerush.yaml", help="Path to configuration file")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--mode", type=str, choices=["train", "test"], default="train", help="Mode: train or test")
+    parser.add_argument("--render", type=str, default=None, help="Render mode (human, human_full, None)")
     parser.add_argument("--episodes-override", type=int, default=None, help="Override num_episodes for quick testing")
     args = parser.parse_args()
 
@@ -178,7 +179,9 @@ def main():
     player_configs = config.get("players", [{"type": "RandomAgent"}, {"type": "RandomAgent"}])
     num_players = len(player_configs)
 
-    render_mode = "human" if args.mode == "test" else None
+    render_mode = args.render
+    if render_mode is None and args.mode == "test":
+        render_mode = "human"
     env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
 
     num_states = env.observation_space.shape[0]

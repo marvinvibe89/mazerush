@@ -158,7 +158,7 @@ class MazerushEnv(gym.Env):
     observations, rewards, dones, truncateds, and infos (one per player).
     """
 
-    metadata = {"render_modes": ["human"]}
+    metadata = {"render_modes": ["human", "human_full"]}
 
     def __init__(
         self,
@@ -388,7 +388,7 @@ class MazerushEnv(gym.Env):
             truncated_n = [True] * self.num_players
 
         # --- 8. Render ---
-        if self.render_mode == "human":
+        if self.render_mode in ["human", "human_full"]:
             self.render()
 
         obs_n = [self._get_obs(i) for i in range(self.num_players)]
@@ -554,7 +554,7 @@ class MazerushEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def render(self):
-        if self.render_mode != "human":
+        if self.render_mode not in ["human", "human_full"]:
             return
         if self._renderer is None:
             self._renderer = MazerushRenderer(self)
