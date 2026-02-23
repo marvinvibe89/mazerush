@@ -315,29 +315,12 @@ class MazerushEnv(gym.Env):
             if act == ACTION_SHOOT and p.status == PlayerStatus.HAS_LASER and p.alive:
                 shooters.append(i)
 
-        # Compute raw beams for all shooters
+        # Compute beams for all shooters
         new_beams: list[tuple[int, list[tuple[int, int]]]] = []
         for pidx in shooters:
             p = self.players[pidx]
             beam_cells = _compute_beam_cells(self.grid, p.x, p.y, self.width, self.height)
             new_beams.append((pidx, beam_cells))
-
-        # Handle neutralization: if two beams share a cell, truncate both
-        # at the intersection point (the shared cell is kept but neither
-        # beam extends past it).
-        if len(new_beams) >= 2:
-            new_beams = self._neutralize_beams(new_beams)
-
-        # Also neutralize new beams against *existing* beams
-        if new_beams and self.active_beams:
-            all_beams = [(pidx, cells) for pidx, cells, _ in self.active_beams]
-            combined = all_beams + new_beams
-            combined = self._neutralize_beams(combined)
-            # Separate back: first len(all_beams) are existing, rest are new
-            for idx, (pidx, cells) in enumerate(combined[:len(all_beams)]):
-                orig_pidx, _, ticks = self.active_beams[idx]
-                self.active_beams[idx] = (orig_pidx, cells, ticks)
-            new_beams = combined[len(all_beams):]
 
         for pidx, beam_cells in new_beams:
             p = self.players[pidx]
@@ -349,38 +332,7 @@ class MazerushEnv(gym.Env):
         self._rebuild_beam_grid()
 
         # --- 3. Check beam kills ---
-        eliminated: set[int] = set()
-        for i, p in enumerate(self.players):
-            if not p.alive:
-                continue
-            cell = (p.x, p.y)
-            if cell in self.beam_grid:
-                hitters = self.beam_grid[cell] - {i}
-                if hitters:
-                    eliminated.add(i)
-
-        if eliminated:
-            # All eliminated players lose; the players who hit them win
-            winners: set[int] = set()
-            for i in eliminated:
-                cell = (self.players[i].x, self.players[i].y)
-                winners |= self.beam_grid[cell] - {i}
-                self.players[i].alive = False
-
-            for i in range(self.num_players):
-                if i in eliminated:
-                    reward_n[i] += -10.0
-                    done_n[i] = True
-                    info_n[i]["result"] = "lose"
-                elif i in winners:
-                    reward_n[i] += 10.0
-                    done_n[i] = True
-                    info_n[i]["result"] = "win"
-                else:
-                    done_n[i] = True  # episode ends for everyone
-
-            # If anyone is eliminated, episode is over for all
-            done_n = [True] * self.num_players
+        self._resolve_kills(reward_n, done_n, info_n)
 
         # --- 4. Process movement (only if episode not over) ---
         if not any(done_n):
@@ -414,30 +366,7 @@ class MazerushEnv(gym.Env):
                                         reward_n[j] -= 0.1
 
             # --- 5. Check beam kills again after movement ---
-            for i, p in enumerate(self.players):
-                if not p.alive:
-                    continue
-                cell = (p.x, p.y)
-                if cell in self.beam_grid:
-                    hitters = self.beam_grid[cell] - {i}
-                    if hitters:
-                        eliminated.add(i)
-
-            if eliminated and not any(done_n):
-                winners = set()
-                for i in eliminated:
-                    cell = (self.players[i].x, self.players[i].y)
-                    winners |= self.beam_grid[cell] - {i}
-                    self.players[i].alive = False
-                for i in range(self.num_players):
-                    if i in eliminated:
-                        reward_n[i] += -10.0
-                        info_n[i]["result"] = "lose"
-                    elif i in winners:
-                        reward_n[i] += 10.0
-                        info_n[i]["result"] = "win"
-                    done_n[i] = True
-                done_n = [True] * self.num_players
+            self._resolve_kills(reward_n, done_n, info_n)
 
         # --- 6. Spawn laser items ---
         if not any(done_n):
@@ -455,60 +384,41 @@ class MazerushEnv(gym.Env):
         return obs_n, reward_n, done_n, truncated_n, info_n
 
     # ------------------------------------------------------------------
-    # Beam neutralization
+    # Kill resolution
     # ------------------------------------------------------------------
 
-    def _neutralize_beams(
-        self,
-        beams: list[tuple[int, list[tuple[int, int]]]],
-    ) -> list[tuple[int, list[tuple[int, int]]]]:
-        """Truncate beams at mutual intersection points.
+    def _resolve_kills(self, reward_n: list[float], done_n: list[bool], info_n: list[dict[str, Any]]):
+        if any(done_n):
+            return
 
-        For any cell that appears in beams from different players, both beams
-        are truncated so that the shared cell is the furthest extent in that
-        direction. The intersection cell is kept in both beams (for visual
-        merging / neutralization display).
-        """
-        if len(beams) < 2:
-            return beams
-
-        # Build cell → set of beam indices
-        cell_owners: dict[tuple[int, int], set[int]] = {}
-        for bidx, (pidx, cells) in enumerate(beams):
-            for c in cells:
-                cell_owners.setdefault(c, set()).add(bidx)
-
-        # Find intersection cells (owned by beams of different players)
-        conflict_cells: set[tuple[int, int]] = set()
-        for cell, owners in cell_owners.items():
-            if len(owners) >= 2:
-                player_ids = {beams[b][0] for b in owners}
-                if len(player_ids) >= 2:
-                    conflict_cells.add(cell)
-
-        if not conflict_cells:
-            return beams
-
-        # Truncate each beam's directional arms at the first conflict cell
-        result: list[tuple[int, list[tuple[int, int]]]] = []
-        for pidx, cells in beams:
-            if not cells:
-                result.append((pidx, cells))
+        eliminated: set[int] = set()
+        for i, p in enumerate(self.players):
+            if not p.alive:
                 continue
+            cell = (p.x, p.y)
+            if cell in self.beam_grid:
+                hitters = self.beam_grid[cell] - {i}
+                if hitters:
+                    eliminated.add(i)
 
-            origin = cells[0]  # origin is always the shooter position
-            # Group cells by direction from origin
-            kept: set[tuple[int, int]] = {origin}
-            for dx, dy in DIRECTION_DELTAS.values():
-                x, y = origin[0] + dx, origin[1] + dy
-                while (x, y) in set(cells):
-                    kept.add((x, y))
-                    if (x, y) in conflict_cells:
-                        break  # keep this cell but stop extending
-                    x += dx
-                    y += dy
-            result.append((pidx, [c for c in cells if c in kept]))
-        return result
+        if eliminated:
+            winners: set[int] = set()
+            for i in eliminated:
+                cell = (self.players[i].x, self.players[i].y)
+                winners |= self.beam_grid[cell] - {i}
+                self.players[i].alive = False
+
+            for i in range(self.num_players):
+                if i in eliminated:
+                    reward_n[i] += -10.0
+                    done_n[i] = True
+                    info_n[i]["result"] = "lose"
+                elif i in winners:
+                    reward_n[i] += 10.0
+                    done_n[i] = True
+                    info_n[i]["result"] = "win"
+                else:
+                    done_n[i] = True  # episode ends for everyone
 
     # ------------------------------------------------------------------
     # Beam grid helper
