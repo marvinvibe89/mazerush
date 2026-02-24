@@ -52,16 +52,16 @@ class DeepQAgent(Agent):
         action_space,
         num_states: int,
         *,
-        learning_rate: float = 1e-4,
-        discount_factor: float = 0.99,
-        epsilon_start: float = 1.0,
-        epsilon_end: float = 0.1,
-        epsilon_decay: float = 0.99,
-        replay_buffer_episodes: int = 1000,
-        train_batch_size: int = 128,
-        train_epochs: int = 1000,
-        hidden_size: int = 64,
-        tau: float = 0.005,
+        learning_rate: float,
+        discount_factor: float,
+        epsilon_start: float,
+        epsilon_end: float,
+        epsilon_decay: float,
+        replay_buffer_episodes: int,
+        train_batch_size: int,
+        train_epochs: int,
+        hidden_size: int,
+        tau: float,
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -153,9 +153,9 @@ class DeepQAgent(Agent):
             self._optimizer.step()
             loss_history.append(loss.item())
 
-            # Soft update of target network
-            for target_param, param in zip(self._target_net.parameters(), self._action_value_fn.parameters()):
-                target_param.data.copy_(self._tau * param.data + (1.0 - self._tau) * target_param.data)
+        # Soft update of target network
+        for target_param, param in zip(self._target_net.parameters(), self._action_value_fn.parameters()):
+            target_param.data.copy_(self._tau * param.data + (1.0 - self._tau) * target_param.data)
         
         # Decay epsilon after each training episode
         self._epsilon = max(self._epsilon_end, self._epsilon * self._epsilon_decay)

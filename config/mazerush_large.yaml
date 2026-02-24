@@ -30,6 +30,7 @@ agent:  # DeepQAgent config (used when a player type is DeepQAgent)
   train_batch_size: 128
   train_epochs: 500
   hidden_size: 256
+  tau: 0.005
 
 training:
   num_episodes: 10000000
