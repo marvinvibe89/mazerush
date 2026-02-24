@@ -225,7 +225,7 @@ class MazerushEnv(gym.Env):
         self.fov_size = fov_size
         self.fov_radius = self.fov_size // 2
 
-        self._player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
+        self._player_states = [max(self.move_cooldown, self.laser_duration) + 1, 3]
         self._other_player_states = [self.fov_size, self.fov_size, max(self.move_cooldown, self.laser_duration) + 1, 3, 2]
         self._item_states = [self.fov_size, self.fov_size, 2]
 
@@ -488,7 +488,7 @@ class MazerushEnv(gym.Env):
         # Own player first
         own_p = self.players[player_idx]
         _write_one_hots(
-            [own_p.x, own_p.y, own_p.move_cooldown_remaining, int(own_p.status)],
+            [own_p.move_cooldown_remaining, int(own_p.status)],
             self._player_states
         )
         obs[idx] = own_p.x / self.width
