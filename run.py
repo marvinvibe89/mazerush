@@ -117,13 +117,17 @@ def train(
     recent_rewards: list[collections.deque] = [
         collections.deque(maxlen=1000) for _ in agents
     ]
+    # NEW: Track the last 1000 loss values per agent
+    recent_losses: list[collections.deque] = [
+        collections.deque(maxlen=1000) for _ in agents
+    ]
 
     for ep in range(num_episodes):
         per_player_steps, cumulative_rewards, is_wins = run_episode(
             agents, env, train=True,
         )
 
-        # Register steps & train DeepQAgents
+        # Register steps & track rewards/wins
         for i, agent in enumerate(agents):
             if isinstance(agent, DeepQAgent):
                 agent.register_action_steps(per_player_steps[i])
@@ -137,9 +141,17 @@ def train(
             for i, agent in enumerate(agents):
                 if isinstance(agent, DeepQAgent):
                     loss_hist = agent.train()
+                    
+                    # NEW: Add new loss values to the rolling window
+                    if loss_hist:
+                        recent_losses[i].extend(loss_hist)
+                        
                     wr = sum(recent_wins[i]) / max(len(recent_wins[i]), 1) * 100
                     avg_reward = sum(recent_rewards[i]) / max(len(recent_rewards[i]), 1)
-                    avg_loss = statistics.mean(loss_hist) if loss_hist else 0.0
+                    
+                    # NEW: Calculate mean over the last 1000 recorded losses
+                    avg_loss = statistics.mean(recent_losses[i]) if recent_losses[i] else 0.0
+                    
                     print(
                         f"[Player {i}] Ep {ep} - Loss: {avg_loss:.6f} "
                         f"- Win Rate: {wr:.1f}% - Avg Reward: {avg_reward:.2f} "
