@@ -2,6 +2,7 @@
 
 import random as _random
 from typing import Any
+from collections import deque
 
 import gymnasium as gym
 import numpy as np
@@ -225,17 +226,17 @@ class MazerushEnv(gym.Env):
         self.fov_size = fov_size
         self.fov_radius = self.fov_size // 2
 
-        self._player_states = [self.width, self.height, max(self.move_cooldown, self.laser_duration) + 1, 3]
-        self._other_player_states = [self.fov_size, self.fov_size, max(self.move_cooldown, self.laser_duration) + 1, 3, 2]
-        self._item_states = [self.fov_size, self.fov_size, 2]
+        # Channels: 0=empty, 1=wall, 2=laser item, 3=player (myself), 4=player (other), 5=laser (mine), 6=laser (other player)
+        self.num_channels = 7
+        self.num_frames = 4
+        self.observation_space = spaces.Box(
+            low=0.0,
+            high=1.0,
+            shape=(self.width, self.height, self.num_channels * self.num_frames),
+            dtype=np.float32
+        )
 
-        own_dim = sum(self._player_states) + 3
-        other_dim = sum(self._other_player_states) + 3
-        item_dim = sum(self._item_states) + 2
-        map_dim = self.fov_size * self.fov_size
-
-        self._total_dims = own_dim + other_dim * (self.num_players - 1) + item_dim * self.max_laser_items + map_dim
-        self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(self._total_dims,), dtype=np.float32)
+        self.frame_queues = [deque(maxlen=self.num_frames) for _ in range(self.num_players)]
 
         # Runtime state (populated in reset)
         self.players: list[_Player] = []
@@ -293,6 +294,9 @@ class MazerushEnv(gym.Env):
                         self.players.append(_Player(cx, cy))
                         self.occupied_cells.add((cx, cy))
                         break
+
+        for dq in self.frame_queues:
+            dq.clear()
 
         obs_n = [self._get_obs(i) for i in range(self.num_players)]
         return obs_n, {}
@@ -476,78 +480,58 @@ class MazerushEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self, player_idx: int) -> np.ndarray:
-        obs = np.zeros(self._total_dims, dtype=np.float32)
-        idx = 0
+        # Create full grid observation for the current frame
+        # Channels: 0=empty, 1=wall, 2=laser item, 3=player (myself), 4=player (other), 5=laser (mine), 6=laser (other player)
+        frame = np.zeros((self.width, self.height, self.num_channels), dtype=np.float32)
 
-        def _write_one_hots(vals: list[int], dims: list[int]):
-            nonlocal idx
-            for val, dim in zip(vals, dims):
-                obs[idx + val] = 1.0
-                idx += dim
+        # 0: Empty (implicit by zeros, but let's be explicit if we want to fill it)
+        # Actually, if we use one-hot, only one channel should be 1.
+        # Let's start by filling everything as empty, then overwrite.
+        frame[:, :, 0] = 1.0
 
-        # Own player first
-        own_p = self.players[player_idx]
-        _write_one_hots(
-            [own_p.x, own_p.y, own_p.move_cooldown_remaining, int(own_p.status)],
-            self._player_states
-        )
-        obs[idx] = own_p.x / self.width
-        obs[idx+1] = own_p.y / self.height
-        obs[idx+2] = own_p.move_cooldown_remaining / self.move_cooldown
-        idx += 3
+        # 1: Wall
+        wall_mask = self.grid == CellType.WALL
+        frame[wall_mask, 1] = 1.0
+        frame[wall_mask, 0] = 0.0
 
-        # Other players
+        # 2: Laser item
+        for ix, iy in self.laser_items:
+            frame[ix, iy, 2] = 1.0
+            frame[ix, iy, 0] = 0.0
+
+        # 3 & 4: Players
         for i, p in enumerate(self.players):
-            if i != player_idx:
-                in_range = (
-                    abs(p.x - own_p.x) <= self.fov_radius and
-                    abs(p.y - own_p.y) <= self.fov_radius and
-                    p.alive
-                )
-                if in_range:
-                    rel_x = p.x - own_p.x + self.fov_radius
-                    rel_y = p.y - own_p.y + self.fov_radius
-                    _write_one_hots(
-                        [rel_x, rel_y, p.move_cooldown_remaining, int(p.status), 1],
-                        self._other_player_states
-                    )
-                    obs[idx] = rel_x / self.fov_size
-                    obs[idx+1] = rel_y / self.fov_size
-                    obs[idx+2] = p.move_cooldown_remaining / self.move_cooldown
-                    idx += 3
-                else:
-                    _write_one_hots([0, 0, 0, 0, 0], self._other_player_states)
-                    idx += 3
-
-        # Laser items
-        for slot in range(self.max_laser_items):
-            if slot < len(self.laser_items):
-                ix, iy = self.laser_items[slot]
-                in_range = (
-                    abs(ix - own_p.x) <= self.fov_radius and
-                    abs(iy - own_p.y) <= self.fov_radius
-                )
-                if in_range:
-                    rel_x = ix - own_p.x + self.fov_radius
-                    rel_y = iy - own_p.y + self.fov_radius
-                    _write_one_hots([rel_x, rel_y, 1], self._item_states)  # visible
-                    obs[idx] = rel_x / self.fov_size
-                    obs[idx+1] = rel_y / self.fov_size
-                    idx += 2
-                else:
-                    _write_one_hots([0, 0, 0], self._item_states)
-                    idx += 2
+            if not p.alive:
+                continue
+            if i == player_idx:
+                frame[p.x, p.y, 3] = 1.0
+                frame[p.x, p.y, 0] = 0.0
             else:
-                _write_one_hots([0, 0, 0], self._item_states)
-                idx += 2
+                frame[p.x, p.y, 4] = 1.0
+                frame[p.x, p.y, 0] = 0.0
 
-        # Map memory (9x9) using fast NumPy slicing
-        slice_vals = self._padded_wall_grid[
-            own_p.x : own_p.x + self.fov_size,
-            own_p.y : own_p.y + self.fov_size
-        ]
-        obs[idx : idx + self.fov_size * self.fov_size] = slice_vals.flatten()
-        return obs
+        # 5 & 6: Lasers
+        for pidx, cells, ticks in self.active_beams:
+            channel = 5 if pidx == player_idx else 6
+            for cx, cy in cells:
+                # Beams can overlap other things, but here we follow the "state a grid cell may be in"
+                # If a cell has a laser, we mark it.
+                frame[cx, cy, channel] = 1.0
+                frame[cx, cy, 0] = 0.0
+
+        # Update queue and stack
+        dq = self.frame_queues[player_idx]
+        dq.append(frame)
+
+        # Fill with initial frame if not enough frames
+        while len(dq) < self.num_frames:
+            dq.appendleft(np.zeros_like(frame)) # Or dq.appendleft(frame.copy())?
+            # Conventional choice is usually zeros or repeating the first frame.
+            # "Padding with zeros" was mentioned in my plan.
+
+        # Concatenate along channel dimension
+        stacked_obs = np.concatenate(list(dq), axis=-1)
+        return stacked_obs
 
     # ------------------------------------------------------------------
     # Rendering

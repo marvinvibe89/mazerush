@@ -50,7 +50,7 @@ class DeepQAgent(Agent):
     def __init__(
         self,
         action_space,
-        num_states: int,
+        obs_shape: tuple[int, int, int],
         *,
         learning_rate: float,
         discount_factor: float,
@@ -65,7 +65,7 @@ class DeepQAgent(Agent):
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._num_states = num_states
+        self._obs_shape = obs_shape  # (W, H, C)
         self._learning_rate = learning_rate
         self._discount_factor = discount_factor
         self._epsilon = epsilon_start
@@ -75,8 +75,8 @@ class DeepQAgent(Agent):
         self._train_epochs = train_epochs
         self._tau = tau
         self._replay_buffer = collections.deque(maxlen=replay_buffer_episodes)
-        self._action_value_fn = _DeepQNetwork(self._num_states, hidden_size, action_space.n).to(self._device)
-        self._target_net = _DeepQNetwork(self._num_states, hidden_size, action_space.n).to(self._device)
+        self._action_value_fn = _DeepQNetwork(self._obs_shape[2], action_space.n).to(self._device)
+        self._target_net = _DeepQNetwork(self._obs_shape[2], action_space.n).to(self._device)
         self._target_net.load_state_dict(self._action_value_fn.state_dict())
         for param in self._target_net.parameters():
             param.requires_grad = False
@@ -89,8 +89,11 @@ class DeepQAgent(Agent):
     def _predict_rewards(self, state) -> torch.Tensor:
         with torch.no_grad():
             x = torch.tensor(state, dtype=torch.float32, device=self._device)
-            if x.dim() == 1:
-                x = x.unsqueeze(0)  # Add batch dimension
+            if x.dim() == 3:
+                x = x.unsqueeze(0)  # Add batch dimension: (B, W, H, C)
+            
+            # Permute (B, W, H, C) -> (B, C, W, H) for Conv2d
+            x = x.permute(0, 3, 1, 2)
             return self._action_value_fn(x)
 
     def select_action(self, state, train: bool = False) -> int:
@@ -136,6 +139,10 @@ class DeepQAgent(Agent):
             # We want to select the Q-value for the action taken at each step
             state_tensors = torch.stack([step.state for step in batch])
             next_state_tensors = torch.stack([step.state_next for step in batch])
+
+            # Permute (B, W, H, C) -> (B, C, W, H)
+            state_tensors = state_tensors.permute(0, 3, 1, 2)
+            next_state_tensors = next_state_tensors.permute(0, 3, 1, 2)
 
             q_values = self._action_value_fn(state_tensors)
             q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -217,20 +224,50 @@ class HumanAgent(Agent):
         return 5  # ACTION_NOTHING
 
 
-class _DeepQNetwork(torch.nn.Module):
-    def __init__(self, num_states: int, hidden_size: int, num_actions: int):
+class ResLayer(torch.nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
         super().__init__()
-        self.num_states = num_states
-        
-        self.output_net = torch.nn.Sequential(
-            torch.nn.Linear(num_states, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, hidden_size),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, num_actions),
-        )
+        self.conv1 = torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = torch.nn.BatchNorm2d(out_channels)
+        self.relu = torch.nn.ReLU(inplace=True)
+        self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = torch.nn.BatchNorm2d(out_channels)
 
-    def forward(self, state: torch.Tensor) -> torch.Tensor:
-        # state is [batch_size, num_states]
-        # output shape is [batch_size, num_actions]
-        return self.output_net(state)
+        self.shortcut = torch.nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = torch.nn.Sequential(
+                torch.nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                torch.nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = self.relu(out)
+        return out
+
+
+class _DeepQNetwork(torch.nn.Module):
+    def __init__(self, in_channels: int, num_actions: int):
+        super().__init__()
+        
+        self.features = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1),
+            torch.nn.BatchNorm2d(32),
+            torch.nn.ReLU(inplace=True),
+            
+            ResLayer(32, 32),
+            ResLayer(32, 64, stride=2),
+            ResLayer(64, 64),
+            
+            torch.nn.AdaptiveAvgPool2d((1, 1)),
+            torch.nn.Flatten()
+        )
+        
+        self.output_net = torch.nn.Linear(64, num_actions)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is [batch_size, channels, width, height]
+        feat = self.features(x)
+        return self.output_net(feat)
