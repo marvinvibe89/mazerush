@@ -8,8 +8,6 @@ from typing import Sequence
 import numpy as np
 import pygame
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from typing_extensions import override
 
 
@@ -224,49 +222,15 @@ class _DeepQNetwork(torch.nn.Module):
         super().__init__()
         self.num_states = num_states
         
-        self.feature_net = FeatRefineLayer(num_states, hidden_size)
-        self.q_head = nn.Linear(hidden_size, num_actions)
+        self.output_net = torch.nn.Sequential(
+            torch.nn.Linear(num_states, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, num_actions),
+        )
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        features = self.feature_net(state)
-        return self.q_head(features)
-
-#########################################################################################################################
-##  The following code is based on https://github.com/BlankCheng/FMNet.pytorch-DeepFunctionalMap/blob/master/model.py  ##
-#########################################################################################################################
-
-class FeatRefineLayer(nn.Module):
-    def __init__(self, in_channels, hidden_size, num_layers=3):
-        super(FeatRefineLayer, self).__init__()
-        
-        self.res_layers = nn.ModuleList()
-        current_channels = in_channels
-        
-        for _ in range(num_layers):
-            self.res_layers.append(ResLayer(current_channels, hidden_size, hidden_size))
-            current_channels = hidden_size
-
-    def forward(self, x):
-        for res_layer in self.res_layers:
-            x = res_layer(x)
-        return x
-
-class ResLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, mid_channels):
-        super(ResLayer, self).__init__()
-        self.fc1 = nn.Linear(in_channels, mid_channels)
-        self.in1 = nn.LayerNorm(mid_channels)
-        self.fc2 = nn.Linear(mid_channels, out_channels)
-        self.in2 = nn.LayerNorm(out_channels)
-        self.fc3 = None
-        if in_channels != out_channels:
-            self.fc3 = nn.Linear(in_channels, out_channels)
-
-    def forward(self, x):
-        x_res = F.relu(self.in1(self.fc1(x)))
-        x_res = self.in2(self.fc2(x_res))
-        
-        if self.fc3 is not None:
-            x = self.fc3(x)
-            
-        return F.relu(x_res + x)
+        # state is [batch_size, num_states]
+        # output shape is [batch_size, num_actions]
+        return self.output_net(state)
