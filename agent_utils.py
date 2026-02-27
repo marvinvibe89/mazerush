@@ -210,7 +210,7 @@ class DeepQAgent(Agent):
         }, path)
 
     def load(self, path: str) -> None:
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=self._device)
         self._action_value_fn.load_state_dict(checkpoint['model_state_dict'])
         self._target_net.load_state_dict(checkpoint['target_state_dict'])
         self._optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
