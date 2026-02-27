@@ -100,7 +100,7 @@ class DeepQAgent(Agent):
             return self._action_value_fn(x)
 
     def select_action(self, state, train: bool = False) -> int:
-        if train and _random.random() < self._epsilon:
+        if train and random.random() < self._epsilon:
             return self._action_space.sample()
         return torch.argmax(self._predict_rewards(state)[0]).item()
 
@@ -137,7 +137,7 @@ class DeepQAgent(Agent):
         loss_history = []
         for epoch in range(self._train_epochs):
             # Sample a batch of transitions
-            batch = _random.sample(all_steps, self._train_batch_size)
+            batch = random.sample(all_steps, self._train_batch_size)
             # Prepare batch data
             actions = torch.tensor(
                 [step.action for step in batch], device=self._device
