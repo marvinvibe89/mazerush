@@ -274,3 +274,30 @@ class _DeepQNetwork(torch.nn.Module):
         value = self.value_stream(features)
         advantage = self.advantage_stream(features)
         return value + (advantage - advantage.mean(dim=1, keepdim=True))
+
+
+def build_agents(
+    player_configs: list[dict],
+    action_space,
+    num_states: int,
+    agent_config: dict,
+) -> list[Agent]:
+    """Instantiate agents from the players list in the config."""
+    agents: list[Agent] = []
+    for pc in player_configs:
+        ptype = pc["type"]
+        if ptype == "HumanAgent":
+            agents.append(HumanAgent(action_space))
+        elif ptype == "RandomAgent":
+            agents.append(RandomAgent(action_space))
+        elif ptype == "NothingAgent":
+            agents.append(NothingAgent(action_space))
+        elif ptype == "DeepQAgent":
+            agents.append(DeepQAgent(
+                action_space,
+                num_states=num_states,
+                **agent_config,
+            ))
+        else:
+            raise ValueError(f"Unknown player type: {ptype}")
+    return agents

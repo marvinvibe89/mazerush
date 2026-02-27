@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mazerush Web Interface</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e26;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #4287f5;
+            margin-bottom: 20px;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #252530;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+
+        .video-wrapper {
+            border: 4px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        img {
+            display: block;
+            max-width: 100%;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-reset {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .btn-reset:hover {
+            background-color: #d32f2f;
+        }
+
+        .status {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #aaa;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Mazerush Environment</h1>
+    <div class="container">
+        <div class="video-wrapper">
+            <img src="{{ url_for('video_feed') }}" alt="Mazerush Video Feed">
+        </div>
+        <div class="controls">
+            <button class="btn-reset" onclick="resetEnv()">Reset Environment</button>
+        </div>
+        <div id="status-text" class="status">Initializing...</div>
+    </div>
+
+    <script>
+        function resetEnv() {
+            fetch('/reset', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Reset:', data);
+                })
+                .catch(err => console.error(err));
+        }
+
+        function updateStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'not_initialized') {
+                        document.getElementById('status-text').innerText = 'Environment not initialized';
+                    } else {
+                        document.getElementById('status-text').innerText =
+                            `Tick: ${data.tick} | Players: ${data.num_players} | Status: ${data.alive.map((a, i) => 'P' + (i + 1) + (a ? ' OK' : ' DEAD')).join(', ')}`;
+                    }
+                })
+                .catch(err => console.error(err));
+        }
+
+        // Keyboard input handling
+        window.addEventListener('keydown', (e) => {
+            const allowedKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '];
+            if (allowedKeys.includes(e.key)) {
+                // Prevent scrolling with arrows/space
+                e.preventDefault();
+
+                fetch('/key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: e.key })
+                })
+                    .then(response => response.json())
+                    .catch(err => console.error(err));
+            }
+        });
+
+        setInterval(updateStatus, 1000);
+    </script>
+</body>
+
+</html>

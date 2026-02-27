@@ -3,3 +3,6 @@ pyyaml
 pygame
 ale-py
 gymnasium
+flask
+opencv-python
+numpy
