@@ -6,3 +6,4 @@ gymnasium
 flask
 opencv-python
 numpy
+huggingface_hub

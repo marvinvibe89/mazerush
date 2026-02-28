@@ -7,6 +7,7 @@ import cv2
 import yaml
 import numpy as np
 import pygame
+import huggingface_hub
 from flask import Flask, render_template, Response, jsonify, request
 from mazerush_env import MazerushEnv
 from agent_utils import build_agents, DeepQAgent, HumanAgent
@@ -15,8 +16,10 @@ app = Flask(__name__)
 
 # --- Hardcoded Configuration ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config/mazerush.yaml")
+CONFIG_PATH = os.path.join(BASE_DIR, "config/mazerush_large.yaml")
+RESUME_TYPE = "hf"  # "hf" or "local"
 RESUME_PATHS = os.path.join(BASE_DIR, "out/20260228_100838/player0_ckpt_4000.pt")
+HF_MODEL_NAME = "20260228_101239__player0_ckpt_114000"
 RENDER_MODE = "human"
 # -------------------------------
 
@@ -32,7 +35,10 @@ def get_env():
             config = yaml.safe_load(f)
         
         render_mode = RENDER_MODE
-        resume_paths = RESUME_PATHS or config.get("training", {}).get("resume_paths")
+        if RESUME_TYPE == "hf":
+            resume_paths = huggingface_hub.hf_hub_download(repo_id=f"marvinvibe/{HF_MODEL_NAME}", filename=HF_MODEL_NAME + ".pt")
+        else:
+            resume_paths = RESUME_PATHS or config.get("training", {}).get("resume_paths")
 
         env_config = config["env"].get("config") or {}
         player_configs = config.get("players", [{"type": "HumanAgent"}, {"type": "RandomAgent"}])
