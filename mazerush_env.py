@@ -175,6 +175,7 @@ class MazerushEnv(gym.Env):
         laser_spawn_retries: int = 10,
         max_episode_ticks: int = 3000,
         fov_size: int = 9,
+        step_penalty: float = -0.01,
         render_mode: str | None = None,
     ):
         super().__init__()
@@ -191,6 +192,7 @@ class MazerushEnv(gym.Env):
         self.laser_min_distance = laser_min_distance
         self.laser_spawn_retries = laser_spawn_retries
         self.max_episode_ticks = max_episode_ticks
+        self.step_penalty = step_penalty
         self.render_mode = render_mode
 
         # Generate the static grid (walls never change).
@@ -307,7 +309,7 @@ class MazerushEnv(gym.Env):
         assert len(action_n) == self.num_players
         self.tick += 1
 
-        reward_n = [0.0] * self.num_players
+        reward_n = [self.step_penalty] * self.num_players
         done_n = [False] * self.num_players
         truncated_n = [False] * self.num_players
         info_n: list[dict[str, Any]] = [{} for _ in range(self.num_players)]
