@@ -105,21 +105,11 @@ class DeepQAgent(Agent):
         return torch.argmax(self._predict_rewards(state)[0]).item()
 
     def register_action_steps(self, action_steps: list[ActionStep]):
-        # Hindsight Outcome Shaping: retroactively amplify signals based on outcome.
-        won = any(s.reward > 5.0 for s in action_steps)
-        lost = any(s.reward < -5.0 for s in action_steps)
         np_steps = []
         for i, step in enumerate(action_steps):
-            r = step.reward - 0.01  # Small tick penalty to encourage speed
-            dist_to_end = len(action_steps) - 1 - i
-            if won:
-                r += 1.5 * (0.98**dist_to_end)
-            elif lost:
-                r -= 0.5 * (0.98**dist_to_end)
-
             np_step = dataclasses.replace(
                 step,
-                reward=r,
+                reward=step.reward,
                 state=np.asarray(step.state, dtype=np.float32),
                 state_next=np.asarray(step.state_next, dtype=np.float32),
             )

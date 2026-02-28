@@ -504,20 +504,19 @@ class MazerushEnv(gym.Env):
                     abs(p.y - own_p.y) <= self.fov_radius and
                     p.alive
                 )
+                rel_x = p.x - own_p.x + self.fov_radius
+                rel_y = p.y - own_p.y + self.fov_radius
                 if in_range:
-                    rel_x = p.x - own_p.x + self.fov_radius
-                    rel_y = p.y - own_p.y + self.fov_radius
                     _write_one_hots(
                         [rel_x, rel_y, p.move_cooldown_remaining, int(p.status), 1],
                         self._other_player_states
                     )
-                    obs[idx] = rel_x / self.fov_size
-                    obs[idx+1] = rel_y / self.fov_size
-                    obs[idx+2] = p.move_cooldown_remaining / self.move_cooldown
-                    idx += 3
                 else:
                     _write_one_hots([0, 0, 0, 0, 0], self._other_player_states)
-                    idx += 3
+                obs[idx] = rel_x / self.fov_size
+                obs[idx+1] = rel_y / self.fov_size
+                obs[idx+2] = p.move_cooldown_remaining / self.move_cooldown
+                idx += 3
 
         # Laser items
         for slot in range(self.max_laser_items):
@@ -527,16 +526,15 @@ class MazerushEnv(gym.Env):
                     abs(ix - own_p.x) <= self.fov_radius and
                     abs(iy - own_p.y) <= self.fov_radius
                 )
+                rel_x = ix - own_p.x + self.fov_radius
+                rel_y = iy - own_p.y + self.fov_radius
                 if in_range:
-                    rel_x = ix - own_p.x + self.fov_radius
-                    rel_y = iy - own_p.y + self.fov_radius
                     _write_one_hots([rel_x, rel_y, 1], self._item_states)  # visible
-                    obs[idx] = rel_x / self.fov_size
-                    obs[idx+1] = rel_y / self.fov_size
-                    idx += 2
                 else:
                     _write_one_hots([0, 0, 0], self._item_states)
-                    idx += 2
+                obs[idx] = rel_x / self.fov_size
+                obs[idx+1] = rel_y / self.fov_size
+                idx += 2
             else:
                 _write_one_hots([0, 0, 0], self._item_states)
                 idx += 2
