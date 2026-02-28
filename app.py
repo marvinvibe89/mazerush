@@ -15,8 +15,8 @@ app = Flask(__name__)
 
 # --- Hardcoded Configuration ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config/mazerush_large.yaml")
-RESUME_PATHS = os.path.join(BASE_DIR, "out/20260227_141735/player0_ckpt_42000.pt")
+CONFIG_PATH = os.path.join(BASE_DIR, "config/mazerush.yaml")
+RESUME_PATHS = os.path.join(BASE_DIR, "out/20260228_100838/player0_ckpt_4000.pt")
 RENDER_MODE = "human"
 # -------------------------------
 

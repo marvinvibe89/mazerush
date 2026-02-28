@@ -420,7 +420,11 @@ class MazerushEnv(gym.Env):
                 self.players[i].alive = False
 
             for i in range(self.num_players):
-                if i in eliminated:
+                if i in eliminated and i in winners:
+                    reward_n[i] += 1.0
+                    done_n[i] = True
+                    info_n[i]["result"] = "draw"
+                elif i in eliminated:
                     reward_n[i] += -10.0
                     done_n[i] = True
                     info_n[i]["result"] = "lose"

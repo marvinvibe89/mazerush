@@ -49,7 +49,7 @@ def run_episode(
     agents: list[Agent],
     env: MazerushEnv,
     train: bool = False,
-) -> tuple[list[list[ActionStep]], list[float], list[bool]]:
+) -> tuple[list[list[ActionStep]], list[float], list[str]]:
     """Run a single Mazerush episode.
 
     Returns per-player action step lists, final cumulative rewards, and win status.
@@ -57,7 +57,7 @@ def run_episode(
     obs_n, info = env.reset()
     per_player_steps: list[list[ActionStep]] = [[] for _ in agents]
     cumulative_rewards = [0.0] * len(agents)
-    is_wins = [False] * len(agents)
+    results = [""] * len(agents)
 
     while True:
         # Collect events for human agents
@@ -71,7 +71,7 @@ def run_episode(
         for event in events:
             if event.type == pygame.QUIT:
                 env.close()
-                return per_player_steps, cumulative_rewards, is_wins
+                return per_player_steps, cumulative_rewards, results
 
         # Select actions
         action_n = [
@@ -90,11 +90,10 @@ def run_episode(
                 ActionStep(action_n[i], prev_obs_n[i], obs_n[i], reward_n[i], done)
             )
             cumulative_rewards[i] += reward_n[i]
-            if info_n[i].get("result") == "win":
-                is_wins[i] = True
+            results[i] = info_n[i].get("result")
 
         if any(done_n) or any(truncated_n):
-            return per_player_steps, cumulative_rewards, is_wins
+            return per_player_steps, cumulative_rewards, results
 
 
 # ---------------------------------------------------------------------------
@@ -111,19 +110,27 @@ def train(
 ):
     """Training loop for Mazerush with multiple agents."""
     win_counts = [0] * len(agents)
-    recent_wins: list[collections.deque] = [
+    draw_counts = [0] * len(agents)
+    lose_counts = [0] * len(agents)
+    recent_win: list[collections.deque] = [
         collections.deque(maxlen=1000) for _ in agents
     ]
-    recent_rewards: list[collections.deque] = [
+    recent_draw: list[collections.deque] = [
+        collections.deque(maxlen=1000) for _ in agents
+    ]
+    recent_lost: list[collections.deque] = [
         collections.deque(maxlen=1000) for _ in agents
     ]
     # NEW: Track the last 1000 loss values per agent
     recent_losses: list[collections.deque] = [
         collections.deque(maxlen=1000) for _ in agents
     ]
+    recent_rewards: list[collections.deque] = [
+        collections.deque(maxlen=1000) for _ in agents
+    ]
 
     for ep in range(num_episodes):
-        per_player_steps, cumulative_rewards, is_wins = run_episode(
+        per_player_steps, cumulative_rewards, results = run_episode(
             agents, env, train=True,
         )
 
@@ -131,11 +138,13 @@ def train(
         for i, agent in enumerate(agents):
             if isinstance(agent, DeepQAgent):
                 agent.register_action_steps(per_player_steps[i])
-                won = is_wins[i]
-                recent_wins[i].append(1 if won else 0)
+                recent_win[i].append(1 if results[i] == "win" else 0)
+                recent_draw[i].append(1 if results[i] == "draw" else 0)
+                recent_lost[i].append(1 if results[i] == "loss" else 0)
                 recent_rewards[i].append(cumulative_rewards[i])
-                if won:
-                    win_counts[i] += 1
+                win_counts[i] += 1 if results[i] == "win" else 0
+                draw_counts[i] += 1 if results[i] == "draw" else 0
+                lose_counts[i] += 1 if results[i] == "loss" else 0
 
         if (ep + 1) % train_frequency == 0:
             for i, agent in enumerate(agents):
@@ -146,7 +155,9 @@ def train(
                     if loss_hist:
                         recent_losses[i].extend(loss_hist)
                         
-                    wr = sum(recent_wins[i]) / max(len(recent_wins[i]), 1) * 100
+                    wr = sum(recent_win[i]) / max(len(recent_win[i]), 1) * 100
+                    dr = sum(recent_draw[i]) / max(len(recent_draw[i]), 1) * 100
+                    lr = sum(recent_lost[i]) / max(len(recent_lost[i]), 1) * 100
                     avg_reward = sum(recent_rewards[i]) / max(len(recent_rewards[i]), 1)
                     
                     # NEW: Calculate mean over the last 1000 recorded losses
@@ -154,8 +165,11 @@ def train(
                     
                     print(
                         f"[Player {i}] Ep {ep} - Loss: {avg_loss:.6f} "
-                        f"- Win Rate: {wr:.1f}% - Avg Reward: {avg_reward:.2f} "
+                        f"- Win Rate: {wr:.1f}% - Draw Rate: {dr:.1f}% - Loss Rate: {lr:.1f}% - - "
+                        f"- Avg Reward: {avg_reward:.2f} "
                         f"- Total Wins: {win_counts[i]} "
+                        f"- Total Draws: {draw_counts[i]} "
+                        f"- Total Losses: {lose_counts[i]} "
                         f"- Eps: {agent._epsilon:.4f}"
                     )
 
@@ -235,8 +249,8 @@ def main():
         # Test / play mode
         print("Starting Mazerush in play mode. Close the window to exit.")
         while True:
-            per_player_steps, rewards, is_wins = run_episode(agents, env, train=False)
-            print(f"Episode finished. Rewards: {rewards}, Wins: {is_wins}")
+            per_player_steps, rewards, results = run_episode(agents, env, train=False)
+            print(f"Episode finished. Rewards: {rewards}, Results: {results}")
             if not pygame.display.get_init():
                 break
 
