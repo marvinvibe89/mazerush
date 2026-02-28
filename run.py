@@ -140,11 +140,11 @@ def train(
                 agent.register_action_steps(per_player_steps[i])
                 recent_win[i].append(1 if results[i] == "win" else 0)
                 recent_draw[i].append(1 if results[i] == "draw" else 0)
-                recent_lost[i].append(1 if results[i] == "loss" else 0)
+                recent_lost[i].append(1 if results[i] == "lose" else 0)
                 recent_rewards[i].append(cumulative_rewards[i])
                 win_counts[i] += 1 if results[i] == "win" else 0
                 draw_counts[i] += 1 if results[i] == "draw" else 0
-                lose_counts[i] += 1 if results[i] == "loss" else 0
+                lose_counts[i] += 1 if results[i] == "lose" else 0
 
         if (ep + 1) % train_frequency == 0:
             for i, agent in enumerate(agents):
