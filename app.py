@@ -76,6 +76,7 @@ def gen_frames():
     obs_n = [e._get_obs(i) for i in range(e.num_players)]
     
     while True:
+        time_start = time.time()
         # Select actions
         action_n = [agent.select_action(obs) for agent, obs in zip(agents, obs_n)]
         
@@ -95,7 +96,8 @@ def gen_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
         
-        time.sleep(1.0 / e.fps)
+        if time.time() - time_start < 1.0 / e.fps:
+            time.sleep(1.0 / e.fps - (time.time() - time_start))
 
 @app.route('/')
 def index():

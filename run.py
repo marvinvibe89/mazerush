@@ -1,4 +1,5 @@
 import os
+import time
 import datetime
 import statistics
 import collections
@@ -60,8 +61,10 @@ def run_episode(
     per_player_steps: list[list[ActionStep]] = [[] for _ in agents]
     cumulative_rewards = [0.0] * len(agents)
     results = [""] * len(agents)
+    is_rendered = any(isinstance(agent, HumanAgent) for agent in agents)
 
     while True:
+        start_time = time.time()
         # Collect events for human agents
         events = env.get_key_events()
         for agent in agents:
@@ -96,6 +99,10 @@ def run_episode(
 
         if any(done_n) or any(truncated_n):
             return per_player_steps, cumulative_rewards, results
+        
+        if is_rendered and time.time() - start_time < 1 / env.fps:
+            time.sleep(1 / env.fps - (time.time() - start_time))
+            
 
 
 # ---------------------------------------------------------------------------
