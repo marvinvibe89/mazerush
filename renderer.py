@@ -173,7 +173,84 @@ class MazerushRenderer:
             lrect = label.get_rect(center=center)
             self._screen.blit(label, lrect)
 
-        # 5. HUD: tick counter
+        # 5. Edge-highlight indicators for off-FOV entities (human mode only)
+        if self.render_mode == "human":
+            p0 = env.players[0]
+            indicator_thickness = max(4, min(cw, ch) // 4)
+            indicator_length  = max(cw, ch) // 4
+
+            def _draw_edge_indicator(wx: float, wy: float, color: tuple) -> None:
+                """Draw a short colored bar on the window edge pointing toward (wx,wy)."""
+                # Direction vector from player centre to entity (in world coords)
+                dx = wx - p0.x
+                dy = wy - p0.y
+                if dx == 0 and dy == 0:
+                    return
+
+                # Map the direction onto the window boundary.
+                # The FOV window covers [0, win_w] x [0, win_h].
+                # Player is always at the centre: (win_w/2, win_h/2).
+                cx_screen = self._win_w / 2
+                cy_screen = self._win_h / 2
+
+                # Find where the ray from centre in direction (dx,dy) hits a wall.
+                # Parametric: p = centre + t*(dx,dy)  →  component hits 0 or max.
+                half_w = cx_screen
+                half_h = cy_screen
+
+                # t values where ray crosses each boundary
+                tx_pos = (half_w / dx)  if dx > 0 else float('inf')
+                tx_neg = (-half_w / dx) if dx < 0 else float('inf')
+                ty_pos = (half_h / dy)  if dy > 0 else float('inf')
+                ty_neg = (-half_h / dy) if dy < 0 else float('inf')
+
+                t = min(tx_pos, tx_neg, ty_pos, ty_neg)
+                hit_x = cx_screen + t * dx
+                hit_y = cy_screen + t * dy
+
+                # Clamp to [0, win] for safety
+                hit_x = max(0.0, min(float(self._win_w), hit_x))
+                hit_y = max(0.0, min(float(self._win_h), hit_y))
+
+                # Determine which edge we hit and draw a bar parallel to it.
+                eps = 2.0
+                if hit_x <= eps:                       # left edge
+                    bar = pygame.Rect(0, int(hit_y) - indicator_length,
+                                      indicator_thickness, indicator_length * 2)
+                elif hit_x >= self._win_w - eps:       # right edge
+                    bar = pygame.Rect(self._win_w - indicator_thickness,
+                                      int(hit_y) - indicator_length,
+                                      indicator_thickness, indicator_length * 2)
+                elif hit_y <= eps:                     # top edge
+                    bar = pygame.Rect(int(hit_x) - indicator_length, 0,
+                                      indicator_length * 2, indicator_thickness)
+                else:                                  # bottom edge
+                    bar = pygame.Rect(int(hit_x) - indicator_length,
+                                      self._win_h - indicator_thickness,
+                                      indicator_length * 2, indicator_thickness)
+
+                bar.clamp_ip(pygame.Rect(0, 0, self._win_w, self._win_h))
+                pygame.draw.rect(self._screen, color, bar, border_radius=3)
+                # Subtle glow overlay
+                glow_surf = pygame.Surface(bar.size, pygame.SRCALPHA)
+                glow_surf.fill((*color, 80))
+                self._screen.blit(glow_surf, bar.topleft)
+
+            # Other players outside FOV
+            for i, p in enumerate(env.players):
+                if i == 0 or not p.alive:
+                    continue
+                if p.x in draw_range_x and p.y in draw_range_y:
+                    continue   # already visible; no indicator needed
+                _draw_edge_indicator(p.x, p.y, PLAYER_COLORS[i % len(PLAYER_COLORS)])
+
+            # Laser items outside FOV
+            for ix, iy in env.laser_items:
+                if ix in draw_range_x and iy in draw_range_y:
+                    continue   # already visible; no indicator needed
+                _draw_edge_indicator(ix, iy, LASER_ITEM_COLOR)
+
+        # 6. HUD: tick counter
         if self.render_mode == "human_full":
             hud_text = f"Tick: {env.tick}"
         elif self.render_mode == "human":
