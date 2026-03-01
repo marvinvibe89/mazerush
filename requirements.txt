@@ -4,6 +4,7 @@ pygame
 ale-py
 gymnasium
 flask
-opencv-python
+gunicorn
+opencv-python-headless
 numpy
 huggingface_hub
