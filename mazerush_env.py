@@ -7,7 +7,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from mazerush_utils import CellType, PlayerStatus
+from mazerush_utils import CellType, PlayerStatus, Player
 from renderer import MazerushRenderer
 
 # ---------------------------------------------------------------------------
@@ -129,25 +129,6 @@ def _compute_beam_cells(
 
 
 # ---------------------------------------------------------------------------
-# Player dataclass
-# ---------------------------------------------------------------------------
-
-class _Player:
-    __slots__ = (
-        "x", "y", "status", "move_cooldown_remaining",
-        "shoot_ticks_remaining", "alive",
-    )
-
-    def __init__(self, x: int, y: int):
-        self.x = x
-        self.y = y
-        self.status: PlayerStatus = PlayerStatus.NEUTRAL
-        self.move_cooldown_remaining: int = 0
-        self.shoot_ticks_remaining: int = 0
-        self.alive: bool = True
-
-
-# ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
 
@@ -240,7 +221,7 @@ class MazerushEnv(gym.Env):
         self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(self._total_dims,), dtype=np.float32)
 
         # Runtime state (populated in reset)
-        self.players: list[_Player] = []
+        self.players: list[Player] = []
         self.laser_items: list[tuple[int, int]] = []
         self.occupied_cells: set[tuple[int, int]] = set()
         # Active beams: list of (player_idx, list_of_cells, ticks_remaining)
@@ -285,14 +266,14 @@ class MazerushEnv(gym.Env):
                         abs(cx - p.x) + abs(cy - p.y) >= min(self.width, self.height) // 3
                         for p in self.players
                     ):
-                        self.players.append(_Player(cx, cy))
+                        self.players.append(Player(cx, cy))
                         self.occupied_cells.add((cx, cy))
                         break
             else:
                 # Fallback: just pick any free cell
                 for cx, cy in spawn_candidates:
                     if (cx, cy) not in self.occupied_cells:
-                        self.players.append(_Player(cx, cy))
+                        self.players.append(Player(cx, cy))
                         self.occupied_cells.add((cx, cy))
                         break
 

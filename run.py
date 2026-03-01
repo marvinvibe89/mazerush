@@ -17,7 +17,7 @@ from mazerush_env import MazerushEnv
 def _build_agents(
     player_configs: list[dict],
     action_space,
-    num_states: list[int],
+    num_states: int,
     agent_config: dict,
 ) -> list[Agent]:
     """Instantiate agents from the players list in the config."""
@@ -55,6 +55,8 @@ def run_episode(
     Returns per-player action step lists, final cumulative rewards, and win status.
     """
     obs_n, info = env.reset()
+    for i, agent in enumerate(agents):
+        agent.set_player(env.players[i])
     per_player_steps: list[list[ActionStep]] = [[] for _ in agents]
     cumulative_rewards = [0.0] * len(agents)
     results = [""] * len(agents)

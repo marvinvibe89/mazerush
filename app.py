@@ -46,10 +46,12 @@ def get_env():
 
         env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
         env.reset()
-
         num_states = env.observation_space.shape[0]
         agent_config = config.get("agent", {})
         agents = build_agents(player_configs, env.action_space, num_states, agent_config)
+        for i, agent in enumerate(agents):
+            agent.set_player(env.players[i])
+
 
         # Resume DeepQAgents
         if resume_paths:

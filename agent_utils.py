@@ -10,6 +10,8 @@ import pygame
 import torch
 from typing_extensions import override
 
+from mazerush_utils import Player
+
 
 @dataclasses.dataclass(frozen=True)
 class ActionStep:
@@ -28,6 +30,10 @@ class Agent(abc.ABC):
     @abc.abstractmethod
     def select_action(self, state, train: bool = False) -> int:
         """Select an action given a state (int or np.ndarray)."""
+        pass
+
+    def set_player(self, player: Player):
+        """Link this agent to a player object for internal status checks."""
         pass
 
 
@@ -220,7 +226,12 @@ class HumanAgent(Agent):
 
     def __init__(self, action_space):
         super().__init__(action_space)
+        self._player: Player | None = None
         self._action_queue: collections.deque[int] = collections.deque(maxlen=8)
+
+    @override
+    def set_player(self, player: Player):
+        self._player = player
 
     @staticmethod
     def _get_key_map() -> dict[int, int]:
@@ -242,8 +253,15 @@ class HumanAgent(Agent):
 
     @override
     def select_action(self, state, train: bool = False) -> int:
+        # Respect cooldown by checking the player object directly if available.
+        can_act = True
+        if self._player is not None:
+            can_act = (self._player.move_cooldown_remaining == 0)
+
         if self._action_queue:
-            return self._action_queue.popleft()
+            # Do not wait for cooldown to shoot.
+            if can_act or self._action_queue[0] == 4:
+                return self._action_queue.popleft()
         return 5  # ACTION_NOTHING
 
 
