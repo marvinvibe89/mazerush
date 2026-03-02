@@ -4,8 +4,8 @@ env:
     width: 9
     height: 9
     seed: 42
-    fps: 30
-    move_cooldown: 5
+    fps: 8
+    move_cooldown: 1
     laser_duration: 15
     max_laser_items: 3
     laser_spawn_prob: 0.02
@@ -13,7 +13,7 @@ env:
     laser_spawn_retries: 10
     max_episode_ticks: 500
     fov_size: 13
-    step_penalty: -0.01
+    step_penalty: 0.0
 
 players:
   # - type: "HumanAgent"
@@ -22,17 +22,16 @@ players:
   # - type: "NothingAgent"
 
 agent:  # DeepQAgent config (used when a player type is DeepQAgent)
-  learning_rate: 5.0e-5
+  learning_rate: 1.0e-4
   discount_factor: 0.99
   epsilon_start: 1.0
   epsilon_end: 0.1
-  epsilon_decay: 0.998
-  replay_buffer_episodes: 5000
-  train_batch_size: 128
-  train_epochs: 1000
-  hidden_size: 256
+  epsilon_decay: 0.995
+  replay_buffer_episodes: 1000
+  train_batch_size: 256
+  train_epochs: 200
+  hidden_size: 512
   tau: 0.005
-
 training:
   num_episodes: 10000000
   save_interval: 1000
