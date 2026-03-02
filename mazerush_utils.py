@@ -17,6 +17,21 @@ class PlayerStatus(enum.IntEnum):
     HAS_LASER = 1
     SHOOTING = 2
 
+class ObsCell(enum.IntEnum):
+  EMPTY = 0
+  WALL = 1
+  LASER_ITEM = 2
+  PLAYER_SELF_NEUTRAL = 3
+  PLAYER_SELF_HAS_LASER = 4
+  PLAYER_SELF_SHOOTING = 5
+  PLAYER_OTHER_NEUTRAL = 6
+  PLAYER_OTHER_HAS_LASER = 7
+  PLAYER_OTHER_SHOOTING = 8
+  LASER_SELF = 9
+  LASER_OTHER = 10
+
+
+NUM_OBS_CELL_TYPES = len(ObsCell)
 
 class Player:
     __slots__ = (

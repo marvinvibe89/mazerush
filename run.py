@@ -18,7 +18,7 @@ from mazerush_env import MazerushEnv
 def _build_agents(
     player_configs: list[dict],
     action_space,
-    num_states: int,
+    obs_shape: tuple[int, ...],
     agent_config: dict,
 ) -> list[Agent]:
     """Instantiate agents from the players list in the config."""
@@ -32,11 +32,13 @@ def _build_agents(
         elif ptype == "NothingAgent":
             agents.append(NothingAgent(action_space))
         elif ptype == "DeepQAgent":
-            agents.append(DeepQAgent(
-                action_space,
-                num_states=num_states,
-                **agent_config,
-            ))
+            agents.append(
+                DeepQAgent(
+                    action_space,
+                    obs_shape=obs_shape,
+                    **agent_config,
+                )
+            )
         else:
             raise ValueError(f"Unknown player type: {ptype}")
     return agents
@@ -219,9 +221,9 @@ def main():
         render_mode = "human"
     env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
 
-    num_states = env.observation_space.shape[0]
+    obs_shape = env.observation_space.shape
     agent_config = config.get("agent", {})
-    agents = _build_agents(player_configs, env.action_space, num_states, agent_config)
+    agents = _build_agents(player_configs, env.action_space, obs_shape, agent_config)
 
     # Resume DeepQAgents
     resume_paths = args.resume or config.get("training", {}).get("resume_paths")

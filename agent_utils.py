@@ -10,7 +10,7 @@ import pygame
 import torch
 from typing_extensions import override
 
-from mazerush_utils import Player
+from mazerush_utils import Player, NUM_OBS_CELL_TYPES
 
 
 @dataclasses.dataclass(frozen=True)
@@ -56,7 +56,7 @@ class DeepQAgent(Agent):
     def __init__(
         self,
         action_space,
-        num_states: int,
+        obs_shape: tuple[int, ...],
         *,
         learning_rate: float,
         discount_factor: float,
@@ -71,7 +71,7 @@ class DeepQAgent(Agent):
     ):
         super().__init__(action_space)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._num_states = num_states
+        self._obs_shape = obs_shape
         self._learning_rate = learning_rate
         self._discount_factor = discount_factor
         self._epsilon = epsilon_start
@@ -82,10 +82,10 @@ class DeepQAgent(Agent):
         self._tau = tau
         self._replay_buffer = collections.deque(maxlen=replay_buffer_episodes)
         self._action_value_fn = _DeepQNetwork(
-            self._num_states, hidden_size, int(action_space.n)
+            obs_shape, hidden_size, int(action_space.n)
         ).to(self._device)
         self._target_net = _DeepQNetwork(
-            self._num_states, hidden_size, int(action_space.n)
+            obs_shape, hidden_size, int(action_space.n)
         ).to(self._device)
         self._target_net.load_state_dict(self._action_value_fn.state_dict())
         for param in self._target_net.parameters():
@@ -95,14 +95,14 @@ class DeepQAgent(Agent):
         )
 
     def _state_to_tensor(self, state) -> torch.Tensor:
-        """Convert a state float array to a tensor."""
-        return torch.tensor(state, dtype=torch.float32, device=self._device)
+        arr = np.asarray(state, dtype=np.float32) / NUM_OBS_CELL_TYPES
+        return torch.tensor(arr, dtype=torch.float32, device=self._device)
 
     def _predict_rewards(self, state) -> torch.Tensor:
         with torch.no_grad():
-            x = torch.tensor(state, dtype=torch.float32, device=self._device)
-            if x.dim() == 1:
-                x = x.unsqueeze(0)  # Add batch dimension
+            x = self._state_to_tensor(state)
+            if x.dim() == len(self._obs_shape):
+                x = x.unsqueeze(0)
             return self._action_value_fn(x)
 
     def select_action(self, state, train: bool = False) -> int:
@@ -112,17 +112,14 @@ class DeepQAgent(Agent):
 
     def register_action_steps(self, action_steps: list[ActionStep]):
         np_steps = []
-        for i, step in enumerate(action_steps):
+        for step in action_steps:
             np_step = dataclasses.replace(
                 step,
-                reward=step.reward,
-                state=np.asarray(step.state, dtype=np.float32),
-                state_next=np.asarray(step.state_next, dtype=np.float32),
+                state=np.asarray(step.state, dtype=np.int8),
+                state_next=np.asarray(step.state_next, dtype=np.int8),
             )
             np_steps.append(np_step)
         self._replay_buffer.append(np_steps)
-        # Decay epsilon after each episode registered
-        self._epsilon = max(self._epsilon_end, self._epsilon * self._epsilon_decay)
 
     def train(self) -> Sequence[float]:
         # Flatten the replay buffer to get a list of all steps
@@ -154,15 +151,19 @@ class DeepQAgent(Agent):
             # We need to gather the Q-values corresponding to the taken actions
             # Output of _predict_rewards(states) is [batch_size, num_actions]
             # We want to select the Q-value for the action taken at each step
+            states_np = (
+                    np.stack([step.state for step in batch]).astype(np.float32)
+                    / NUM_OBS_CELL_TYPES
+            )
+            next_states_np = (
+                np.stack([step.state_next for step in batch]).astype(np.float32)
+                / NUM_OBS_CELL_TYPES
+            )
             state_tensors = torch.tensor(
-                np.stack([step.state for step in batch]),
-                dtype=torch.float32,
-                device=self._device,
+                states_np, dtype=torch.float32, device=self._device
             )
             next_state_tensors = torch.tensor(
-                np.stack([step.state_next for step in batch]),
-                dtype=torch.float32,
-                device=self._device,
+                next_states_np, dtype=torch.float32, device=self._device
             )
 
             q_values = self._action_value_fn(state_tensors)
@@ -173,12 +174,12 @@ class DeepQAgent(Agent):
                 next_q_online = self._action_value_fn(next_state_tensors)
                 next_actions = next_q_online.argmax(dim=1, keepdim=True)
                 next_q_target = self._target_net(next_state_tensors)
-                target_q_values = next_q_target.gather(1, next_actions).squeeze(1)
-                targets = rewards + self._discount_factor * target_q_values * (
+                max_next_q_values = next_q_target.gather(1, next_actions).squeeze(1)
+                targets = rewards + self._discount_factor * max_next_q_values * (
                     1 - dones
                 )
 
-            loss = torch.nn.functional.mse_loss(q_values, targets)
+            loss = torch.nn.functional.smooth_l1_loss(q_values, targets)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
                 self._action_value_fn.parameters(), max_norm=1.0
@@ -186,15 +187,16 @@ class DeepQAgent(Agent):
             self._optimizer.step()
             loss_history.append(loss.item())
 
-            # Soft update of target network inside the training loop
-            with torch.no_grad():
-                for target_param, param in zip(
-                    self._target_net.parameters(), self._action_value_fn.parameters()
-                ):
-                    target_param.data.copy_(
-                        self._tau * param.data + (1.0 - self._tau) * target_param.data
-                    )
+            # Soft update of target network inside epoch loop
+            for target_param, param in zip(
+                self._target_net.parameters(), self._action_value_fn.parameters()
+            ):
+                target_param.data.copy_(
+                    self._tau * param.data + (1.0 - self._tau) * target_param.data
+                )
 
+        # Decay epsilon after each training episode
+        self._epsilon = max(self._epsilon_end, self._epsilon * self._epsilon_decay)
         return loss_history
 
     def save(self, path: str) -> None:
@@ -266,21 +268,43 @@ class HumanAgent(Agent):
 
 
 class _DeepQNetwork(torch.nn.Module):
-    def __init__(self, num_states: int, hidden_size: int, num_actions: int):
+    def __init__(
+        self,
+        obs_shape: tuple[int, ...],
+        hidden_size: int,
+        num_actions: int,
+    ):
         super().__init__()
-        self.feature_layer = torch.nn.Sequential(
-            torch.nn.Linear(num_states, hidden_size),
+        in_channels = obs_shape[0]
+        self.conv = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
             torch.nn.ReLU(),
-            torch.nn.Linear(hidden_size, hidden_size),
+            torch.nn.Conv2d(32, 64, kernel_size=3, padding=1),
             torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            torch.nn.ReLU(),
+            torch.nn.AdaptiveMaxPool2d((4, 4)),
+            torch.nn.Flatten(),
         )
-        self.value_stream = torch.nn.Linear(hidden_size, 1)
-        self.advantage_stream = torch.nn.Linear(hidden_size, num_actions)
+        with torch.no_grad():
+            dummy = torch.zeros(1, *obs_shape)
+            conv_out_size = self.conv(dummy).shape[1]
+
+        self.value_head = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, 1),
+        )
+        self.advantage_head = torch.nn.Sequential(
+            torch.nn.Linear(conv_out_size, hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(hidden_size, num_actions),
+        )
 
     def forward(self, state: torch.Tensor) -> torch.Tensor:
-        features = self.feature_layer(state)
-        value = self.value_stream(features)
-        advantage = self.advantage_stream(features)
+        features = self.conv(state)
+        value = self.value_head(features)
+        advantage = self.advantage_head(features)
         return value + (advantage - advantage.mean(dim=1, keepdim=True))
 
 
