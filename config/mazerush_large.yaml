@@ -1,6 +1,7 @@
 env:
   name: "Mazerush"
   config:
+    num_players: 2
     width: 30
     height: 20
     seed: 42

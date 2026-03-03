@@ -1,6 +1,7 @@
 import os
 import time
 import datetime
+import random
 import statistics
 import collections
 import yaml
@@ -102,7 +103,7 @@ def run_episode(
         
         if is_rendered and time.time() - start_time < 1 / env.fps:
             time.sleep(1 / env.fps - (time.time() - start_time))
-            
+
 
 
 # ---------------------------------------------------------------------------
@@ -113,83 +114,86 @@ def train(
     agents: list[Agent],
     env: MazerushEnv,
     num_episodes: int,
+    self_play: bool = False,
     checkpoint_dir: str | None = None,
     save_interval: int = 1000,
     train_frequency: int = 50,
+    num_players: int = 2,
 ):
-    """Training loop for Mazerush with multiple agents."""
-    win_counts = [0] * len(agents)
-    draw_counts = [0] * len(agents)
-    lose_counts = [0] * len(agents)
-    recent_win: list[collections.deque] = [
-        collections.deque(maxlen=1000) for _ in agents
-    ]
-    recent_draw: list[collections.deque] = [
-        collections.deque(maxlen=1000) for _ in agents
-    ]
-    recent_lost: list[collections.deque] = [
-        collections.deque(maxlen=1000) for _ in agents
-    ]
-    # NEW: Track the last 1000 loss values per agent
-    recent_losses: list[collections.deque] = [
-        collections.deque(maxlen=1000) for _ in agents
-    ]
-    recent_rewards: list[collections.deque] = [
-        collections.deque(maxlen=1000) for _ in agents
-    ]
+    """Pool-based training loop for Mazerush with multiple agents."""
+    n = len(agents)
+    ep_counts = [0] * n
+    win_counts = [0] * n
+    draw_counts = [0] * n
+    lose_counts = [0] * n
+    recent_win: list[collections.deque] = [collections.deque(maxlen=1000) for _ in range(n)]
+    recent_draw: list[collections.deque] = [collections.deque(maxlen=1000) for _ in range(n)]
+    recent_lost: list[collections.deque] = [collections.deque(maxlen=1000) for _ in range(n)]
+    recent_losses: list[collections.deque] = [collections.deque(maxlen=1000) for _ in range(n)]
+    recent_rewards: list[collections.deque] = [collections.deque(maxlen=1000) for _ in range(n)]
 
     for ep in range(num_episodes):
-        per_player_steps, cumulative_rewards, results = run_episode(
-            agents, env, train=True,
-        )
+        # Sample a pair of pool indices
+        if self_play:
+            idxs = random.choices(range(n), k=num_players)
+        else:
+            idxs = random.sample(range(n), num_players)
 
-        # Register steps & track rewards/wins
-        for i, agent in enumerate(agents):
-            if isinstance(agent, DeepQAgent):
-                agent.register_action_steps(per_player_steps[i])
-                recent_win[i].append(1 if results[i] == "win" else 0)
-                recent_draw[i].append(1 if results[i] == "draw" else 0)
-                recent_lost[i].append(1 if results[i] == "lose" else 0)
-                recent_rewards[i].append(cumulative_rewards[i])
-                win_counts[i] += 1 if results[i] == "win" else 0
-                draw_counts[i] += 1 if results[i] == "draw" else 0
-                lose_counts[i] += 1 if results[i] == "lose" else 0
+        pair = [agents[idx] for idx in idxs]
+        per_player_steps, cumulative_rewards, results = run_episode(pair, env, train=True)
 
-        if (ep + 1) % train_frequency == 0:
-            for i, agent in enumerate(agents):
-                if isinstance(agent, DeepQAgent):
-                    loss_hist = agent.train()
-                    
-                    # NEW: Add new loss values to the rolling window
-                    if loss_hist:
-                        recent_losses[i].extend(loss_hist)
-                        
-                    wr = sum(recent_win[i]) / max(len(recent_win[i]), 1) * 100
-                    dr = sum(recent_draw[i]) / max(len(recent_draw[i]), 1) * 100
-                    lr = sum(recent_lost[i]) / max(len(recent_lost[i]), 1) * 100
-                    avg_reward = sum(recent_rewards[i]) / max(len(recent_rewards[i]), 1)
-                    
-                    # NEW: Calculate mean over the last 1000 recorded losses
-                    avg_loss = statistics.mean(recent_losses[i]) if recent_losses[i] else 0.0
-                    
-                    print(
-                        f"[Player {i}] Ep {ep} - Loss: {avg_loss:.6f} "
-                        f"- Win Rate: {wr:.1f}% - Draw Rate: {dr:.1f}% - Loss Rate: {lr:.1f}% - - "
-                        f"- Avg Reward: {avg_reward:.2f} "
-                        f"- Total Wins: {win_counts[i]} "
-                        f"- Total Draws: {draw_counts[i]} "
-                        f"- Total Losses: {lose_counts[i]} "
-                        f"- Eps: {agent._epsilon:.4f}"
-                    )
+        # Register steps & update per-agent stats
+        for i, pool_idx in enumerate(idxs):
+            agent = agents[pool_idx]
+            if not isinstance(agent, DeepQAgent):
+                continue
+            agent.register_action_steps(per_player_steps[i])
+            ep_counts[pool_idx] += 1
+            recent_win[pool_idx].append(1 if results[i] == "win" else 0)
+            recent_draw[pool_idx].append(1 if results[i] == "draw" else 0)
+            recent_lost[pool_idx].append(1 if results[i] == "lose" else 0)
+            recent_rewards[pool_idx].append(cumulative_rewards[i])
+            win_counts[pool_idx] += 1 if results[i] == "win" else 0
+            draw_counts[pool_idx] += 1 if results[i] == "draw" else 0
+            lose_counts[pool_idx] += 1 if results[i] == "lose" else 0
 
+            # Train when this agent's own ep count hits a multiple of train_frequency
+            if ep_counts[pool_idx] % train_frequency == 0:
+                loss_hist = agent.train()
+                if loss_hist:
+                    recent_losses[pool_idx].extend(loss_hist)
+
+                wr = sum(recent_win[pool_idx]) / max(len(recent_win[pool_idx]), 1) * 100
+                dr = sum(recent_draw[pool_idx]) / max(len(recent_draw[pool_idx]), 1) * 100
+                lr = sum(recent_lost[pool_idx]) / max(len(recent_lost[pool_idx]), 1) * 100
+                avg_reward = sum(recent_rewards[pool_idx]) / max(len(recent_rewards[pool_idx]), 1)
+                avg_loss = statistics.mean(recent_losses[pool_idx]) if recent_losses[pool_idx] else 0.0
+
+                print(
+                    f"[Player {pool_idx}] Ep {ep+1} (own: {ep_counts[pool_idx]}) "
+                    f"- Loss: {avg_loss:.6f} "
+                    f"- Win Rate: {wr:.1f}% - Draw Rate: {dr:.1f}% - Loss Rate: {lr:.1f}% "
+                    f"- Avg Reward: {avg_reward:.2f} "
+                    f"- Total Wins: {win_counts[pool_idx]} "
+                    f"- Total Draws: {draw_counts[pool_idx]} "
+                    f"- Total Losses: {lose_counts[pool_idx]} "
+                    f"- Eps: {agent._epsilon:.4f}"
+                )
+
+        # Checkpoint all pool agents at global save_interval
         if checkpoint_dir and (ep + 1) % save_interval == 0:
             for i, agent in enumerate(agents):
-                if isinstance(agent, DeepQAgent):
-                    path = os.path.join(checkpoint_dir, f'player{i}_ckpt_{ep + 1}.pt')
-                    agent.save(path)
-                    print(f'Saved player {i} checkpoint to {path}')
+                if not isinstance(agent, DeepQAgent):
+                    continue
+                path = os.path.join(checkpoint_dir, f'agent{i}_ckpt_{ep + 1}.pt')
+                agent.save(path)
+                print(f'Saved agent {i} checkpoint to {path}')
 
-    print(f"\nTraining complete. Win counts: {win_counts}")
+    print(f"\nPool training complete.")
+    for i in range(n):
+        if not isinstance(agents[i], DeepQAgent):
+            continue
+        print(f"  Agent {i}: {ep_counts[i]} episodes, {win_counts[i]}W / {draw_counts[i]}D / {lose_counts[i]}L")
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +209,12 @@ def main():
     parser.add_argument("--mode", type=str, choices=["train", "test"], default="train", help="Mode: train or test")
     parser.add_argument("--render", type=str, default=None, help="Render mode (human, human_full, None)")
     parser.add_argument("--episodes-override", type=int, default=None, help="Override num_episodes for quick testing")
+    parser.add_argument(
+        "--self-play",
+        action="store_true",
+        default=False,
+        help="Allow self-play in pool training (same agent can fill both slots).",
+    )
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -212,12 +222,11 @@ def main():
 
     env_config = config["env"].get("config") or {}
     player_configs = config.get("players", [{"type": "RandomAgent"}, {"type": "RandomAgent"}])
-    num_players = len(player_configs)
 
     render_mode = args.render
     if render_mode is None and args.mode == "test":
         render_mode = "human"
-    env = MazerushEnv(num_players=num_players, render_mode=render_mode, **env_config)
+    env = MazerushEnv(render_mode=render_mode, **env_config)
 
     num_states = env.observation_space.shape[0]
     agent_config = config.get("agent", {})
@@ -245,11 +254,11 @@ def main():
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint_dir = f"out/{timestamp}"
         os.makedirs(checkpoint_dir, exist_ok=True)
-        print(f"Checkpoints will be saved to {checkpoint_dir}")
 
         train(
             agents, env,
             num_episodes=num_episodes,
+            self_play=args.self_play,
             checkpoint_dir=checkpoint_dir,
             save_interval=training_cfg.get("save_interval", 1000),
             train_frequency=training_cfg.get("train_frequency", 50),
