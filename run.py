@@ -8,7 +8,7 @@ import yaml
 import argparse
 import pygame
 
-from agent_utils import Agent, DeepQAgent, RandomAgent, HumanAgent, NothingAgent, ActionStep
+from agent_utils import Agent, DeepQAgent, PPOAgent, RandomAgent, HumanAgent, NothingAgent, ActionStep
 from mazerush_env import MazerushEnv
 
 
@@ -21,6 +21,7 @@ def _build_agents(
     action_space,
     num_states: int,
     agent_config: dict,
+    ppo_agent_config: dict | None = None,
 ) -> list[Agent]:
     """Instantiate agents from the players list in the config."""
     agents: list[Agent] = []
@@ -37,6 +38,12 @@ def _build_agents(
                 action_space,
                 num_states=num_states,
                 **agent_config,
+            ))
+        elif ptype == "PPOAgent":
+            agents.append(PPOAgent(
+                action_space,
+                num_states=num_states,
+                **(ppo_agent_config or {}),
             ))
         else:
             raise ValueError(f"Unknown player type: {ptype}")
@@ -145,7 +152,7 @@ def train(
         # Register steps & update per-agent stats
         for i, pool_idx in enumerate(idxs):
             agent = agents[pool_idx]
-            if not isinstance(agent, DeepQAgent):
+            if not isinstance(agent, (DeepQAgent, PPOAgent)):
                 continue
             agent.register_action_steps(per_player_steps[i])
             ep_counts[pool_idx] += 1
@@ -177,13 +184,13 @@ def train(
                     f"- Total Wins: {win_counts[pool_idx]} "
                     f"- Total Draws: {draw_counts[pool_idx]} "
                     f"- Total Losses: {lose_counts[pool_idx]} "
-                    f"- Eps: {agent._epsilon:.4f}"
+                    + (f"- Eps: {agent._epsilon:.4f}" if isinstance(agent, DeepQAgent) else "")
                 )
 
         # Checkpoint all pool agents at global save_interval
         if checkpoint_dir and (ep + 1) % save_interval == 0:
             for i, agent in enumerate(agents):
-                if not isinstance(agent, DeepQAgent):
+                if not isinstance(agent, (DeepQAgent, PPOAgent)):
                     continue
                 path = os.path.join(checkpoint_dir, f'agent{i}_ckpt_{ep + 1}.pt')
                 agent.save(path)
@@ -191,7 +198,7 @@ def train(
 
     print(f"\nPool training complete.")
     for i in range(n):
-        if not isinstance(agents[i], DeepQAgent):
+        if not isinstance(agents[i], (DeepQAgent, PPOAgent)):
             continue
         print(f"  Agent {i}: {ep_counts[i]} episodes, {win_counts[i]}W / {draw_counts[i]}D / {lose_counts[i]}L")
 
@@ -230,7 +237,8 @@ def main():
 
     num_states = env.observation_space.shape[0]
     agent_config = config.get("agent", {})
-    agents = _build_agents(player_configs, env.action_space, num_states, agent_config)
+    ppo_agent_config = config.get("ppo_agent", {})
+    agents = _build_agents(player_configs, env.action_space, num_states, agent_config, ppo_agent_config)
 
     # Resume DeepQAgents
     resume_paths = args.resume or config.get("training", {}).get("resume_paths")
@@ -238,7 +246,7 @@ def main():
         resume_paths = resume_paths.split(",")
         resume_idx = 0
         for i, agent in enumerate(agents):
-            if isinstance(agent, DeepQAgent):
+            if isinstance(agent, (DeepQAgent, PPOAgent)):
                 resume_path = resume_paths[resume_idx]
                 resume_idx = (resume_idx + 1) % len(resume_paths)
                 if os.path.exists(resume_path):
