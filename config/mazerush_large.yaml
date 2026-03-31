@@ -39,5 +39,5 @@ agent:  # DeepQAgent config (used when a player type is DeepQAgent)
 
 training:
   num_episodes: 10000000
-  save_interval: 1000
+  save_interval: 20000
   train_frequency: 10
